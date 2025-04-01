@@ -1,0 +1,13 @@
+### Note: DO NOT use quantized model or quantization_bit when merging lora adapters
+
+### model
+model_name_or_path: /data/hfc/LLaMA-Factory/output/刘星_sft
+adapter_name_or_path: /data/hfc/LLaMA-Factory/saves/刘星_dpo/llama3_8b_dpo_lora/TorchTrainer_899e4_00000_0_2025-03-26_19-43-29/checkpoint_000001/checkpoint/
+template: llama3
+trust_remote_code: true
+
+### export
+export_dir: output/刘星 #合并了两个lora的刘星模型
+export_size: 5
+export_device: cpu
+export_legacy_format: false

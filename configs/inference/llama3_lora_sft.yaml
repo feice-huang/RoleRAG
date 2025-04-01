@@ -1,0 +1,5 @@
+model_name_or_path: ./output/刘星_sft
+adapter_name_or_path: ./saves/刘星_dpo/llama3_8b_dpo_lora/TorchTrainer_899e4_00000_0_2025-03-26_19-43-29/checkpoint_000001/checkpoint
+template: llama3
+infer_backend: huggingface  # choices: [huggingface, vllm]
+trust_remote_code: true
