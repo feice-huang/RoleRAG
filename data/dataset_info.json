@@ -10,6 +10,15 @@
       "history": "history"
     }
   },
+  "刘星_消融_sft": {
+    "file_name": "刘星_dpo_shuffle.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "chosen",
+      "history": "history"
+    }
+  },
   "刘星_sft": {
     "file_name": "刘星_sft_shuffle.json",
     "columns": {
