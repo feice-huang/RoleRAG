@@ -7,7 +7,7 @@ template: llama3
 trust_remote_code: true
 
 ### export
-export_dir: output/刘星_cot 
+export_dir: output/刘星_style
 export_size: 5
 export_device: cpu
 export_legacy_format: false

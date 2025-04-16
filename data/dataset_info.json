@@ -1,15 +1,4 @@
 {
-  "刘星_dpo": {
-    "file_name": "刘星_dpo_shuffle.json",
-    "ranking": true,
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "chosen": "chosen",
-      "rejected": "rejected",
-      "history": "history"
-    }
-  },
   "刘星_消融_sft": {
     "file_name": "刘星_dpo_shuffle.json",
     "columns": {
@@ -25,6 +14,25 @@
       "prompt": "instruction",
       "query": "input",
       "response": "cot", 
+      "history": "history"
+    }
+  },
+  "刘星_style":{
+    "file_name": "刘星_style.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output"
+    }
+  },
+  "刘星_dpo": {
+    "file_name": "刘星_dpo_shuffle.json",
+    "ranking": true,
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "chosen": "chosen",
+      "rejected": "rejected",
       "history": "history"
     }
   },

@@ -21,7 +21,7 @@ OUTPUT_PATH_STATEMENT = f"{OUTPUT_PATH_BASE}/statement" # 一个中间文件，s
 OUTPUT_PATH_WITH_QUERY = f"{OUTPUT_PATH_BASE}/with_query" # 一个中间文件，with_query
 OUTPUT_PATH_CHOSEN = f"{OUTPUT_PATH_BASE}/chosen" # 一个中间文件，chosen
 
-#改到v2之后新增的输出，有用的东西是f"{OUTPUT_PATH_BASE}/cot/{role}_cot.jsonl"，和f"{OUTPUT_PATH_BASE}/style/{role}_style_transfer.jsonl"
+#改到v2之后新增的输出，有用的东西是f"{OUTPUT_PATH_BASE}/cot/{role}_cot.jsonl"，和f"{OUTPUT_PATH_BASE}/style/{role}_style.jsonl"
 OUTPUT_PATH_COT = f"{OUTPUT_PATH_BASE}/cot" # 一个输出文件，cot
 OUTPUT_PATH_STYLE = f"{OUTPUT_PATH_BASE}/style" # 一个输出文件，style
 
@@ -571,12 +571,12 @@ def generate_cot(role, model_engine, token):
     save_jsonl(cot_data, cot_path)
     print(f"Saved CoT data to {cot_path}")
 
-def generate_style_transfer(role):
+def generate_style(role):
     """
     从 conversation 数据生成风格迁移数据
     """
     conversation_path = f"{OUTPUT_PATH_DPO}/{role}_conversation.jsonl"
-    style_transfer_path = f"{OUTPUT_PATH_STYLE}/{role}_style_transfer.jsonl"
+    style_transfer_path = f"{OUTPUT_PATH_STYLE}/{role}_style.jsonl"
 
     # 检查文件是否存在
     if os.path.exists(style_transfer_path):
@@ -638,22 +638,24 @@ def main(role, model_engine, token):
     # convert_summary(role)
 
     # DPO 转换
-    conversation_path = f"{DATASET_PATH}/profiles/{role}.jsonl"
-    chosen_path = f"{OUTPUT_PATH_CHOSEN}/{role}_chosen.jsonl"
-    full_path = f"{OUTPUT_PATH_DPO}/{role}_conversation.jsonl"
+    # conversation_path = f"{DATASET_PATH}/profiles/{role}.jsonl"
+    # chosen_path = f"{OUTPUT_PATH_CHOSEN}/{role}_chosen.jsonl"
+    # full_path = f"{OUTPUT_PATH_DPO}/{role}_conversation.jsonl"
 
-    convert_to_conversation_chosen(role, conversation_path, chosen_path)
-    convert_to_conversation_full(role, chosen_path, full_path, model_engine, token) # 这里会调用 DeepSeek 模型
+    # convert_to_conversation_chosen(role, conversation_path, chosen_path)
+    # convert_to_conversation_full(role, chosen_path, full_path, model_engine, token) # 这里会调用 DeepSeek 模型
     
-    generate_statements(role, model_engine, token) # 这里会调用 DeepSeek 模型
-    generate_queries(role, model_engine, token) # 这里会调用 DeepSeek 模型
-    generate_rejected(role, model_engine, token) # 这里会调用 DeepSeek 模型
+    # generate_statements(role, model_engine, token) # 这里会调用 DeepSeek 模型
+    # generate_queries(role, model_engine, token) # 这里会调用 DeepSeek 模型
+    # generate_rejected(role, model_engine, token) # 这里会调用 DeepSeek 模型
 
     # 生成CoT数据
-    generate_cot(role, model_engine, token) # 这里会调用 DeepSeek 模型
+    # generate_cot(role, model_engine, token) # 这里会调用 DeepSeek 模型
+    shuffle_and_save(f"{OUTPUT_PATH_COT}/{role}_*.jsonl", f"{OUTPUT_PATH_BASE}/{role}_cot_shuffle.json") # 不是shuffle，而是jsonl->json
     
     # 生成Style数据
-    generate_style_transfer(role)
+    # generate_style(role)
+    shuffle_and_save(f"{OUTPUT_PATH_STYLE}/{role}_*.jsonl", f"{OUTPUT_PATH_BASE}/{role}_style_shuffle.json") # 不是shuffle，而是jsonl->json
 
     # 处理 sft 数据
     # modified feice Apr 15, 2025 at 22:11
