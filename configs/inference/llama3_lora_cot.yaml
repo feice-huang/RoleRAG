@@ -1,0 +1,6 @@
+model_name_or_path: /data/hfc/checkpoints/Llama-3.1-8B-Instruct
+# adapter_name_or_path: /data/hfc/RoleRAG/saves/刘星_only_dpo/llama3_8b_dpo_lora/TorchTrainer_9a143_00000_0_2025-04-13_13-03-13/checkpoint_000002/checkpoint
+adapter_name_or_path: /data/hfc/RoleRAG/saves/刘星_cot/llama3_8b_sft_lora/TorchTrainer_97609_00000_0_2025-04-16_16-34-20/checkpoint_000000/checkpoint
+template: llama3
+infer_backend: huggingface  # choices: [huggingface, vllm]
+trust_remote_code: true
