@@ -19,6 +19,15 @@
       "history": "history"
     }
   },
+  "刘星_cot":{
+    "file_name": "刘星_cot.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "cot", 
+      "history": "history"
+    }
+  },
   "刘星_sft": {
     "file_name": "刘星_sft_shuffle.json",
     "columns": {
