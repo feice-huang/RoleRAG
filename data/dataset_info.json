@@ -17,6 +17,14 @@
       "history": "history"
     }
   },
+  "刘星_cot_shuffle":{
+    "file_name": "刘星_cot_shuffle.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "cot"
+    }
+  },
   "刘星_recall":{
     "file_name": "家有儿女_刘星_recall_shuffle.json",
     "columns": {

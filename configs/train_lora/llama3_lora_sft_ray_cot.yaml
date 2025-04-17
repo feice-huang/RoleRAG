@@ -10,7 +10,7 @@ lora_rank: 8
 lora_target: all
 
 ### dataset
-dataset: 刘星_cot # ****************
+dataset: 刘星_cot_shuffle # ****************
 dataset_dir: /data/hfc/RoleRAG/data  # or use local absolute path
 template: llama3
 cutoff_len: 2048
