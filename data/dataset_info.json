@@ -17,6 +17,14 @@
       "history": "history"
     }
   },
+  "刘星_recall":{
+    "file_name": "家有儿女_刘星_recall_shuffle.json",
+    "columns": {
+      "prompt": "instruction",
+      "query": "query",
+      "response": "recall"
+    }
+  },
   "刘星_style":{
     "file_name": "刘星_style.json",
     "columns": {
@@ -38,86 +46,6 @@
   },
   "刘星_sft": {
     "file_name": "刘星_sft_shuffle.json",
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "response": "output",
-      "history": "history"
-    }
-  },
-  "刘梅_dpo": {
-    "file_name": "刘梅_dpo_shuffle.json",
-    "ranking": true,
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "chosen": "chosen",
-      "rejected": "rejected",
-      "history": "history"
-    }
-  },
-  "刘梅_sft": {
-    "file_name": "刘梅_sft_shuffle.json",
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "response": "output",
-      "history": "history"
-    }
-  },
-  "夏东海_dpo": {
-    "file_name": "夏东海_dpo_shuffle.json",
-    "ranking": true,
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "chosen": "chosen",
-      "rejected": "rejected",
-      "history": "history"
-    }
-  },
-  "夏东海_sft": {
-    "file_name": "夏东海_sft_shuffle.json",
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "response": "output",
-      "history": "history"
-    }
-  },
-  "小雨_dpo": {
-    "file_name": "小雨_dpo_shuffle.json",
-    "ranking": true,
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "chosen": "chosen",
-      "rejected": "rejected",
-      "history": "history"
-    }
-  },
-  "小雨_sft": {
-    "file_name": "小雨_sft_shuffle.json",
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "response": "output",
-      "history": "history"
-    }
-  },
-  "小雪_dpo": {
-    "file_name": "小雪_dpo_shuffle.json",
-    "ranking": true,
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "chosen": "chosen",
-      "rejected": "rejected",
-      "history": "history"
-    }
-  },
-  "小雪_sft": {
-    "file_name": "小雪_sft_shuffle.json",
     "columns": {
       "prompt": "instruction",
       "query": "input",

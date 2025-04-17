@@ -9,6 +9,7 @@
         i. 将query-recall pair随机两个或三个拼在一起，让模型能够recall多条陈述
     b. 相关问题作为输入，statements作为输出，编写instruction
     c. 最终结果在/data/hfc/RoleRAG/mydata/recall中
+    d. 将recall的不同来源数据shuffle到一起[如果knowledge共享的话，否则不启用，或手动shuffle即可]
 [以上功能已验证]
 2. cot的反例
 未来将移除：
@@ -439,7 +440,7 @@ def fill_in_relevant_query_role_instruction_template(character):
 def generate_role_queries_v2(role, model_engine, token):
     statement_path = f"{OUTPUT_PATH_STATEMENT}/{role}_statement.json"
     with_query_path = f"{OUTPUT_PATH_WITH_QUERY}/{role}_with_query.json"
-    recall_path = f"{OUTPUT_PATH_RECALL}/{role}_recall.json"
+    recall_path = f"{OUTPUT_PATH_RECALL}/{role}_recall.jsonl"
 
     if os.path.exists(recall_path):
         print(f"{recall_path} 已存在，跳过生成步骤。")
@@ -481,8 +482,9 @@ def generate_role_queries_v2(role, model_engine, token):
             "recall": combined_recall
         })
 
-    with open(recall_path, 'w', encoding='utf-8') as f:
-        json.dump(results, f, ensure_ascii=False, indent=4)
+    # with open(recall_path, 'w', encoding='utf-8') as f:
+    #     json.dump(results, f, ensure_ascii=False, indent=4)
+    save_jsonl(results, recall_path)
 
 def fill_in_relevant_query_world_template(world, statement):
     return f'''下面是关于作品{world}的一段陈述：
@@ -513,7 +515,7 @@ def fill_in_relevant_query_world_instruction_template(world):
 def generate_world_queries(world, model_engine, token):
     statement_path = f"{OUTPUT_PATH_STATEMENT}/{world}_statement.json"
     with_query_path = f"{OUTPUT_PATH_WITH_QUERY}/{world}_with_query.json"
-    recall_path = f"{OUTPUT_PATH_RECALL}/{world}_recall.json"
+    recall_path = f"{OUTPUT_PATH_RECALL}/{world}_recall.jsonl"
 
     if os.path.exists(recall_path):
         print(f"{recall_path} 已存在，跳过生成步骤。")
@@ -555,8 +557,9 @@ def generate_world_queries(world, model_engine, token):
             "recall": combined_recall
         })
 
-    with open(recall_path, 'w', encoding='utf-8') as f:
-        json.dump(results, f, ensure_ascii=False, indent=4)
+    # with open(recall_path, 'w', encoding='utf-8') as f:
+    #     json.dump(results, f, ensure_ascii=False, indent=4)
+    save_jsonl(results, recall_path)
 
 def fill_in_rejected_template(role, statement, query):
     return f'''人设陈述：{statement}，问题：{query}，
@@ -569,11 +572,11 @@ def fill_in_rejected_template(role, statement, query):
 - rejected: 回答2
 '''
 
-def generate_rejected(role, model_engine, token):
-    """从 with_query 生成 dpo 并存储。"""
-    with_query_path = f"{OUTPUT_PATH_WITH_QUERY}/{role}_with_query.json"
+def generate_answer(role, model_engine, token):
+    """从 recall 数据生成 DPO answer 并存储。"""
+    recall_path = f"{OUTPUT_PATH_RECALL}/{role}_recall.jsonl"
     dpo_path = f"{OUTPUT_PATH_DPO}/{role}_generated_qa.jsonl"
-    
+
     # 检查文件是否存在
     if os.path.exists(dpo_path):
         print(f"{dpo_path} 已存在，跳过生成步骤。")
@@ -581,33 +584,34 @@ def generate_rejected(role, model_engine, token):
 
     # 创建目标目录
     os.makedirs(os.path.dirname(dpo_path), exist_ok=True)
-    
-    with open(with_query_path, 'r', encoding='utf-8') as f:
-        with_query_data = json.load(f)
-    
+
+    # 读取 recall 数据
+    recall_data = load_conversation(recall_path)
     results = []
-    for item in tqdm(with_query_data, desc="Generating DPO"):
-        for query in item["queries"]:
-            instruction = f"你正在扮演{role}，关于{role}有陈述“{item['statement']}”，请以{role}的身份回答问题\n"
-            messages = [
-                {"role": "system", "content": "你是一个语言改写助手，帮助用户构筑数据集。"},
-                {"role": "user", "content": fill_in_rejected_template(role, item['statement'], query)}
-            ]
-            _, generated_content = call_tsinghua_deepseek(model_engine, token, messages)
-            print("messages:", messages)
-            print("generated_content: ", generated_content)
-            answers = [a.strip() for a in generated_content.split('\n') if a.startswith('- ')]
-            if len(answers) >= 2:
-                results.append({
-                    "instruction": instruction,
-                    "input": query.replace('- ', ''),
-                    "chosen": answers[0].replace('- chosen: ', ''),
-                    "rejected": answers[1].replace('- rejected ', '')
-                })
-    
-    # with open(dpo_path, 'w', encoding='utf-8') as f:
-    #     json.dump(results, f, ensure_ascii=False, indent=4)
+
+    for item in tqdm(recall_data, desc="Generating DPO"):
+        query = item["query"]
+        recall = item["recall"]
+        instruction = f"你正在扮演{role}，关于{role}有陈述“{recall}”，请以{role}的身份回答问题\n"
+        messages = [
+            {"role": "system", "content": "你是一个语言改写助手，帮助用户构筑数据集。"},
+            {"role": "user", "content": fill_in_rejected_template(role, recall, query)}
+        ]
+        _, generated_content = call_tsinghua_deepseek(model_engine, token, messages)
+        print("messages:", messages)
+        print("generated_content: ", generated_content)
+        answers = [a.strip() for a in generated_content.split('\n') if a.startswith('- ')]
+        if len(answers) >= 2:
+            results.append({
+                "instruction": instruction,
+                "input": query.replace('- ', ''),
+                "chosen": answers[0].replace('- chosen: ', ''),
+                "rejected": answers[1].replace('- rejected ', '')
+            })
+
+    # 保存生成的 DPO 数据
     save_jsonl(results, dpo_path)
+    print(f"Saved DPO data to {dpo_path}")
 
 def cot_history_input():
     """
@@ -801,6 +805,9 @@ def generate_style(role):
     print(f"Saved Style Transfer data to {style_transfer_path}")
 
 def shuffle_and_save(input_pattern, output_file):
+    """
+    接受输入是jsonl文件，输出是json文件
+    """
     # 匹配输入文件
     input_files = glob.glob(input_pattern)
     all_data = []
@@ -825,37 +832,73 @@ def shuffle_and_save(input_pattern, output_file):
 
     print(f"Saved shuffled data to {output_file}")
 
+def shuffle_and_save_world(roles, world):
+    """
+    按 roles 和 world 匹配 recall.jsonl 文件，混合后 shuffle 并保存。
+    :param input_path: 输入文件路径（OUTPUT_PATH_RECALL）
+    :param output_file: 输出文件路径
+    :param roles: 角色列表
+    :param world: 世界名称
+    """
+    all_data = []
+    input_path = OUTPUT_PATH_RECALL
+    output_file = f"{OUTPUT_PATH_BASE}/{world}_{'_'.join(roles)}_recall_shuffle.json"
+
+    # 读取 world 的 recall 数据
+    world_file = os.path.join(input_path, f"{world}_recall.jsonl")
+    if os.path.exists(world_file):
+        with open(world_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                item = json.loads(line)
+                item["instruction"] = f"下面是一段关于{world}的问题，请为我提供用于回复这些问题的信息。\n\n按问题涉及的信息不同，提供数个多样且简洁的可能信息。严格遵循示例中的格式，不需要多余分析，避免诸如\"以下是答案：\"之类的陈述。\n示例输出格式：\n\n- ……\n- ……"
+                all_data.append(item)
+
+    # 遍历 roles，加载对应的 recall 数据
+    for role in roles:
+        role_file = os.path.join(input_path, f"{role}_recall.jsonl")
+        if os.path.exists(role_file):
+            with open(role_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    item = json.loads(line)
+                    item["instruction"] = f"下面是一段关于{world}和{role}的问题，请为我提供用于回复这些问题的信息。\n\n按问题涉及的信息不同，提供数个多样且简洁的可能信息。严格遵循示例中的格式，不需要多余分析，避免诸如\"以下是答案：\"之类的陈述。\n示例输出格式：\n\n- ……\n- ……"
+                    all_data.append(item)
+
+    # 打乱数据顺序
+    random.shuffle(all_data)
+
+    # 保存为 JSON 文件
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(all_data, f, ensure_ascii=False, indent=4)
+
+    print(f"Saved shuffled data to {output_file}")
+
 def main(world, role, model_engine, token):
-    # DPO 转换
+    # 【对话类数据】DPO 转换
     # conversation_path = f"{DATASET_PATH}/profiles/{role}.jsonl"
     # chosen_path = f"{OUTPUT_PATH_CHOSEN}/{role}_chosen.jsonl"
     # full_path = f"{OUTPUT_PATH_DPO}/{role}_conversation.jsonl"
-
     # convert_to_conversation_chosen(role, conversation_path, chosen_path)
     # convert_to_conversation_full(role, chosen_path, full_path, model_engine, token) # 这里会调用 DeepSeek 模型
     
+    # 【访谈类数据】用于Knowledge部分
     generate_world_statements(world, model_engine, token) # 这里会调用 DeepSeek 模型
     generate_world_queries(world, model_engine, token) # 这里会调用 DeepSeek 模型
     generate_role_statements(role, model_engine, token) # 这里会调用 DeepSeek 模型
     generate_role_queries_v2(role, model_engine, token) # 这里会调用 DeepSeek 模型
-    
-    # generate_rejected(role, model_engine, token) # 这里会调用 DeepSeek 模型
+    # shuffle_and_save(f"{OUTPUT_PATH_RECALL}/*_recall.jsonl", f"{OUTPUT_PATH_BASE}/{world}_{role}_shuffle.json") 这里有bug，不能直接shuffle，会把不同人混在一起。
+    shuffle_and_save_world([role], world)
 
-    # 生成CoT数据
-    # generate_cot(role, model_engine, token) # 这里会调用 DeepSeek 模型
+
+    # 【访谈类数据】用于CoT部分
+    generate_answer(role, model_engine, token) # 这里会调用 DeepSeek 模型
+    generate_cot(role, model_engine, token) # 这里会调用 DeepSeek 模型
     # shuffle_and_save(f"{OUTPUT_PATH_COT}/{role}_*.jsonl", f"{OUTPUT_PATH_BASE}/{role}_cot_shuffle.json") # 不是shuffle，而是jsonl->json
     
-    # 生成Style数据
-    # generate_style(role)
-    # shuffle_and_save(f"{OUTPUT_PATH_STYLE}/{role}_*.jsonl", f"{OUTPUT_PATH_BASE}/{role}_style_shuffle.json") # 不是shuffle，而是jsonl->json
-
-    # 处理 sft 数据
-    # modified feice Apr 15, 2025 at 22:11
-    # shuffle_and_save(f"{OUTPUT_PATH_SFT}/{role}_*.jsonl", f"{OUTPUT_PATH_BASE}/{role}_sft_shuffle.json")
-
-    # 处理 dpo 数据
-    # shuffle_and_save(f"{OUTPUT_PATH_DPO}/{role}_*.jsonl", f"{OUTPUT_PATH_BASE}/{role}_dpo_shuffle.json")
-
 
 # 示例调用
 main("家有儿女", "刘星", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDgxMjQ5NCwiZXhwIjoxNzQ0ODM0MDk0fQ.qIBgt20u3LTiq1UmNKLPJ5Bl7EQlojOFK4AnbTZEDok")
+main("家有儿女", "刘梅", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDgxMjQ5NCwiZXhwIjoxNzQ0ODM0MDk0fQ.qIBgt20u3LTiq1UmNKLPJ5Bl7EQlojOFK4AnbTZEDok")
+main("家有儿女", "夏东海", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDgxMjQ5NCwiZXhwIjoxNzQ0ODM0MDk0fQ.qIBgt20u3LTiq1UmNKLPJ5Bl7EQlojOFK4AnbTZEDok")
+main("家有儿女", "小雨", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDgxMjQ5NCwiZXhwIjoxNzQ0ODM0MDk0fQ.qIBgt20u3LTiq1UmNKLPJ5Bl7EQlojOFK4AnbTZEDok")
+main("家有儿女", "小雪", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDgxMjQ5NCwiZXhwIjoxNzQ0ODM0MDk0fQ.qIBgt20u3LTiq1UmNKLPJ5Bl7EQlojOFK4AnbTZEDok")
