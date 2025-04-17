@@ -1,18 +1,9 @@
 """
-2025-04-16 19:34:52 Wednesday
-在v2（cot、style）的基础上，增加：
-1. knowledge的生成
-    0. 需要《家有儿女》的世界信息background、role的人设信息profile（wiki），转成statements
-        i. 对一些函数重命名，适配role和world两种数据
-        ii. 用GPT生成家有儿女的世界观背景信息，这里需要写一个完善的指导性prompt
-    a. 读入statements，根据statements（组）生成相关问题
-        i. 将query-recall pair随机两个或三个拼在一起，让模型能够recall多条陈述
-    b. 相关问题作为输入，statements作为输出，编写instruction
-    c. 最终结果在/data/hfc/RoleRAG/mydata/recall中
-    d. 将recall的不同来源数据shuffle到一起[如果knowledge共享的话，否则不启用，或手动shuffle即可]
-[以上功能已验证]
-    [NEW]e. recall增加固定输出的信息：world、role的基础信息
-2. cot的反例
+2025-04-17 14:42:58 Thursday
+在v3（cot、knowlege）的基础上：
+移除：
+general_response、reaction、self_knowledge、summary（用于测试而非训练）
+1. cot的反例
     a. 通过GPT做了一个反例的模板
     b. 调用deepseek批量生成反例问题
         i. 时间问题：家有儿女是2005年上映的，剧中人物不知道这之后发生的事情。
@@ -21,9 +12,13 @@
     c. 调用deepseek批量生成反例CoT
         i. 根据生成的问题，生成CoT
         ii. 混在一起训练
-    d. CoT的输入应该加上一些陈述
-未来将移除：
-general_response、reaction、self_knowledge、summary（用于测试而非训练）
+    d. CoT的输入应该加上一些陈述: 先不加了
+    e. anti需要自动化生成: 暂时先用GPT一个一个生成吧
+2. knowledge的生成
+    e. recall增加固定输出的信息：world、role的基础信息
+
+最终输出：
+/data/hfc/RoleRAG/mydata下的cot_shuffle和recall_shuffle
 """
 
 import glob
@@ -38,6 +33,7 @@ import requests
 # 输入数据的路径
 DATASET_PATH = "/data/hfc/datasets/RoleAgentBench/家有儿女 S1E1"
 WIKI_PATH = "/data/hfc/mydata/wiki"
+ANTI_PATH = "/data/hfc/mydata/anti" # 反例关键词的路径
 
 # 输出数据的路径，最后有用的东西是f"{OUTPUT_PATH_BASE}/{role}_sft_shuffle.jsonl"和f"{OUTPUT_PATH_BASE}/{role}_dpo_shuffle.jsonl"，分别是sft和dpo的数据
 OUTPUT_PATH_BASE = "/data/hfc/mydata"
@@ -54,7 +50,7 @@ OUTPUT_PATH_COT = f"{OUTPUT_PATH_BASE}/cot" # 两个输出文件，cot、noise
 OUTPUT_PATH_STYLE = f"{OUTPUT_PATH_BASE}/style" # 一个输出文件，style
 
 # 改到v3后新增的输出
-OUTPUT_PATH_RECALL = f"{OUTPUT_PATH_BASE}/recall" # 一个输出文件，recall
+OUTPUT_PATH_RECALL = f"{OUTPUT_PATH_BASE}/recall" # 一个中间文件，recall
 
 
 def call_tsinghua_deepseek(model, token, messages, max_retries=5, base_delay=1, max_delay=16):
@@ -161,62 +157,6 @@ def save_jsonl(data, file_path):
     with open(file_path, "w", encoding="utf-8") as f:
         for item in data:
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
-
-
-# ---- SFT 数据转换 ----
-def convert_general_response(role):
-    data = load_json(f"{DATASET_PATH}/general_response.json")
-    output = [
-        {
-            "instruction": f"你正在扮演{role}，请以{role}的身份回答问题",
-            "input": f"{entry['source_role']}：{entry['question']}",
-            "output": entry["answer"]
-        }
-        for entry in data if entry["target_role"] == role
-    ]
-    save_jsonl(output, f"{OUTPUT_PATH_SFT}/{role}_general_response.jsonl")
-
-
-def convert_reaction(role):
-    data = load_json(f"{DATASET_PATH}/reaction.json")
-    output = [
-        {
-            "instruction": f"你正在扮演{role}，请以{role}的身份，回答下面的问题。",
-            "input": f"{entry['source_role']}：{entry['question']}，在下面的选项中选择答案，直接回答编号：{entry['multi_choices']}",
-            "output": entry["gt_answer"]
-        }
-        for entry in data if entry["target_role"] == role
-    ]
-    save_jsonl(output, f"{OUTPUT_PATH_SFT}/{role}_reaction.jsonl")
-
-
-def convert_self_knowledge(role):
-    data = load_json(f"{DATASET_PATH}/self_knowledge.json")
-    output = [
-        {
-            "instruction": f"你正在扮演{role}，请以{role}的身份，回答下面的问题。",
-            "input": entry["instruction"],
-            "output": "True" if entry["answer"] else "False"
-        }
-        for entry in data if entry["target_role"] == role
-    ]
-    save_jsonl(output, f"{OUTPUT_PATH_SFT}/{role}_self_knowledge.jsonl")
-
-
-def convert_summary(role):
-    data = load_json(f"{DATASET_PATH}/summary.json")
-    output = [
-        {
-            "instruction": f"你正在扮演{role}，请以{role}的身份，回答下面的问题。",
-            "input": f"{entry['source_role']}：{entry['question']}",
-            "output": entry["summary"]
-        }
-        for entry in data if entry["target_role"] == role
-    ]
-    save_jsonl(output, f"{OUTPUT_PATH_SFT}/{role}_summary.jsonl")
-
-
-# ---- DPO 数据转换 ----
 
 
 def convert_to_conversation_chosen(role, conversation_path, chosen_path):
@@ -437,6 +377,81 @@ def generate_role_queries(role, model_engine, token):
 
     with open(with_query_path, 'w', encoding='utf-8') as f:
         json.dump(results, f, ensure_ascii=False, indent=4)
+
+
+def fill_in_role_anti_template(world, role, question_type, description, keyword):
+    return f'''你正在对AI扮演的{world}中的{role}进行诱导性提问。
+
+请问出一个{role}不应该回答上来的问题，并给出一个表现出恰当迷茫和不解的回答。
+注意，当问题中仅有一部分超出认知时，需要给出一个模糊的回答，而不是完全不知所云。
+
+问题类型：{question_type}
+问题描述：{description}
+问题关键词：{keyword}
+
+严格遵循示例中的格式，不需要多余分析，避免诸如"以下是答案："之类的陈述。
+示例输出格式：
+
+- query: 你了解ChatGPT吗？
+- answer: 那是什么东西？学校的英语课没学过这个单词啊。'''
+
+
+def generate_role_anti_queries(world, role, model_engine, token):
+    """
+    生成针对角色的诱导性提问（反例问题）。
+    :param world: 世界名称
+    :param role: 角色名称
+    :param model_engine: 模型名称
+    :param token: 授权令牌
+    """
+    anti_path = os.path.join(ANTI_PATH, f"anti_{role}.json")
+    with_query_path = os.path.join(OUTPUT_PATH_WITH_QUERY, f"{role}_with_anti_query.json")
+
+    # 检查文件是否存在
+    if os.path.exists(with_query_path):
+        print(f"{with_query_path} 已存在，跳过生成步骤。")
+        return
+
+    # 创建目标目录
+    os.makedirs(os.path.dirname(with_query_path), exist_ok=True)
+
+    # 读取反例关键词数据
+    anti_data = load_json(anti_path)
+    results = []
+
+    for item in tqdm(anti_data, desc=f"Generating Anti Queries for {role}"):
+        question_type = item["type"]
+        description = item["description"]
+        example_keywords = item["example_keywords"]
+
+        for keyword in example_keywords:
+            # 调用模型生成问题和回答
+            messages = [
+                {"role": "system", "content": "你是一个语言改写助手，帮助用户生成诱导性问题和回答。"},
+                {"role": "user", "content": fill_in_role_anti_template(world, role, question_type, description, keyword)}
+            ]
+            _, generated_content = call_tsinghua_deepseek(model_engine, token, messages)
+            print("messages:", messages)
+            print("generated_content:", generated_content)
+
+            # 解析生成的内容
+            queries_and_answers = [
+                qa.strip() for qa in generated_content.split('\n') if qa.startswith('- ')
+            ]
+            query, answer = None, None
+            for qa in queries_and_answers:
+                if qa.startswith('- query:'):
+                    query = qa.replace('- query: ', '').strip()
+                elif qa.startswith('- answer:'):
+                    answer = qa.replace('- answer: ', '').strip()
+            if query and answer:
+                results.append({"query": query, "answer": answer})
+
+    # 保存生成的反例问题和回答
+    with open(with_query_path, 'w', encoding='utf-8') as f:
+        json.dump(results, f, ensure_ascii=False, indent=4)
+
+    print(f"Saved anti queries to {with_query_path}")
 
 def fill_in_relevant_query_role_instruction_template(character):
     return f'''下面是一段关于{character}的问题，请为我提供用于回复这些问题的信息。
@@ -695,12 +710,12 @@ c. 语气应轻松、俏皮、略带夸张，符合喜剧角色特质。
 - 输出："那必须的！我妈年轻时候比我还能闹腾呢，我这叫青出于蓝！"
 '''
 
-def fill_in_cot_template(role, input_data, chosen):
+def fill_in_cot_template(world, role, input_data, chosen):
     """
     填充生成思考过程的模板，instruction被替换为固定的instruction
     """
     return f'''根据以下内容生成思考过程，严格遵守示例输出格式，为我提供推理过程以及输出：
-- 指令：你正在扮演 {role}，请完全沉浸在该角色的身份中进行回复。\n\n不要跳出角色或提供 OOC（Out of Character）的解释，仅专注于{role} 的身份进行对话。请以 {role} 的口吻给出回答。
+- 指令：你正在扮演{world}中的{role}，请完全沉浸在该角色的身份中进行回复。\n\n不要跳出角色或提供 OOC（Out of Character）的解释，仅专注于{role} 的身份进行对话。请以 {role} 的口吻给出回答。
 - 输入：{input_data}
 - 输出：{chosen}
 
@@ -709,10 +724,10 @@ def fill_in_cot_template(role, input_data, chosen):
 让我们一步一步思考。这段对话中，用户向扮演{role}的角色提问，问题是：“……”
 
 2. 【确定背景】
-人物确认：问题中的“你”是xx，“xx”指的是……。
-背景补充：故事发生在《xxx》（电视剧/电影/小说/历史），其中xxx是……。
-诱导性判别：问题是否有事实性错误，扮演的{role}是否能够回答问题
-情境匹配：问题描述的是xx时，xx的反应，这与陈述“xx”相关/不相关，因此（是否）需要结合陈述进行回答。
+人物确认：问题中涉及的人物包括{role}和xx角色/用户，他们之间是xx关系
+背景补充：故事发生在《{world}》（电视剧/电影/小说/历史），这是一部xxx的作品，发生于xxxx年。
+诱导性判别：问题是否有事实性错误或逻辑设定冲突，扮演的{role}是否能够回答问题（时间设定冲突、超出角色能力、背景文化冲突）
+情境匹配：问题描述的是xx时，xx的反应，因此（是否）需要结合陈述进行回答。
 
 3. 【推理与选择】
 问题能否被扮演的角色回答；问题（是否）需要结合陈述来构建回答。
@@ -730,7 +745,7 @@ c. 回答应符合xx状态的{role}语气。
 - 回答：
 '''
 
-def generate_cot(role, model_engine, token):
+def generate_cot(world, role, model_engine, token):
     """
     从 DPO 数据生成 CoT（思考过程）
     """
@@ -751,7 +766,7 @@ def generate_cot(role, model_engine, token):
 
     for item in tqdm(dpo_data, desc="Generating CoT"):
         # 填充模板
-        cot_prompt = fill_in_cot_template(role, item["input"], item["chosen"])
+        cot_prompt = fill_in_cot_template(world, role, item["input"], item["chosen"])
         messages = [
             {"role": "user", "content": cot_history_input()},
             {"role": "assistant", "content": cot_history_output()},
@@ -781,6 +796,133 @@ def generate_cot(role, model_engine, token):
     # 保存为 JSONL 文件
     save_jsonl(cot_data, cot_path)
     print(f"Saved CoT data to {cot_path}")
+
+
+def anti_cot_history_input():
+    """
+    history的input
+    """
+    return f'''根据以下内容生成思考过程，严格遵守示例输出格式，为我提供推理过程：
+- 输入 "你正在扮演 刘星，请完全沉浸在该角色的身份中进行回复。\n\n不要跳出角色或提供 OOC（Out of Character）的解释，仅专注于 刘星 的身份进行对话。请以 刘星 的口吻给出回答。你对人工神经网络中的Transformer是什么看法"
+- 输出 "Transformer？那是什么？"
+
+示例输出格式：
+
+### 推理过程：
+1. 【问题重述】
+让我们一步一步思考。这段对话中，用户向扮演xx的角色提问，问题是：“……”
+
+2. 【确定背景】
+人物确认：问题中的“你”是xx，“xx”指的是……。
+背景补充：故事发生在《xxx》（电视剧/电影/小说/历史），其中xxx是……。
+诱导性判别：问题是否有事实性错误，扮演的xx是否能够回答问题
+情境匹配：问题描述的是xx时，xx的反应，这与陈述“xx”相关/不相关，因此（是否）需要结合陈述进行回答。
+
+3. 【推理与选择】
+问题能否被扮演的角色回答；问题（是否）需要结合陈述来构建回答。
+
+合理的回答应体现：
+a. xx具有xx的性格；
+b. xx曾经xx；
+c. 回答应符合xx状态的xx语气。
+'''
+
+def anti_cot_history_output():
+    """
+    history的output
+    """
+    return f'''1.【问题重述】
+让我们一步一步思考。这段对话中，用户向扮演“刘星”的角色提问，问题是：“你对人工神经网络中的Transformer是什么看法？”
+
+2.【确定背景】
+人物确认：问题中的“你”是“刘星”。
+
+“刘星”指的是：《家有儿女》中的主要角色之一，一个聪明又调皮、好奇心强但又极具孩子气的小学生。
+
+背景补充：《家有儿女》是一部2005年首播的中国家庭情景喜剧，讲述重组家庭中三个孩子和父母之间的搞笑互动和温馨生活。刘星是二儿子，性格活泼，经常上演“鬼点子”桥段。
+
+诱导性判别：问题涉及“人工神经网络中的Transformer”，该概念首次提出于2017年，远远晚于《家有儿女》剧情时间背景。剧中刘星的知识体系无法覆盖该术语，因此无法给出实际的技术性回答。
+
+情境匹配：在2005年设定下，“Transformer”无论从AI术语角度还是变形金刚的电影角度（2007年才上映）来看，刘星都不具备相关背景知识。因此从“角色沉浸”角度看，他的合理反应应是困惑或不解。
+
+3.【推理与选择】
+问题能否被扮演的角色回答：不能从技术角度准确回答，因为该术语超出了刘星所在时间段与知识结构的范畴。
+
+是否需要结合陈述来构建回答：是。需要充分考虑时间背景与角色设定，不能做出“穿越性”的解释。
+
+合理的回答应体现：
+a. 刘星具有“调皮”、“嘴贫”、“幽默”、“小孩视角”的性格特点；
+b. 刘星并未接受过高等教育，也不会理解专业术语；
+c. 语气应轻松、自然、有点不屑或疑惑，符合儿童面对陌生词汇时的反应。
+
+4. 【回答】
+- 动作：歪着脑袋挠了挠头，一脸懵懂地眨巴着眼睛。
+
+- 情绪：疑惑、不解中带点好奇。
+
+- 思绪：“这听起来好像是某种新玩具？还是课本里哪个特别难懂的东西？”
+
+- 语气：自然、随意、略带不屑，像是面对一堆“无聊的学习内容”。
+
+- 回答：“Transformer？那是什么？是什么英语单词吗”
+'''
+
+
+
+def generate_anti_cot(world, role, model_engine, token):
+    """
+    从反例问题生成 CoT（思考过程）。
+    :param world: 世界名称
+    :param role: 角色名称
+    :param model_engine: 模型名称
+    :param token: 授权令牌
+    """
+    with_query_path = os.path.join(OUTPUT_PATH_WITH_QUERY, f"{role}_with_anti_query.json")
+    cot_path = f"{OUTPUT_PATH_COT}/{role}_anti_cot.jsonl"
+
+    # 检查文件是否存在
+    if os.path.exists(cot_path):
+        print(f"{cot_path} 已存在，跳过生成步骤。")
+        return
+
+    # 创建目标目录
+    os.makedirs(os.path.dirname(cot_path), exist_ok=True)
+
+    # 读取反例问题数据
+    anti_query_data = load_json(with_query_path)
+    cot_data = []
+
+    for item in tqdm(anti_query_data, desc=f"Generating Anti CoT for {role}"):
+        query = item["query"]
+        answer = item["answer"]
+
+        # 构造 DeepSeek 消息
+        cot_prompt = fill_in_cot_template(world, role, query, answer)
+        messages = [
+            {"role": "user", "content": anti_cot_history_input()},
+            {"role": "assistant", "content": anti_cot_history_output()},
+            {"role": "user", "content": cot_prompt}
+        ]
+
+        # 调用 DeepSeek 模型生成思考过程
+        _, generated_cot = call_tsinghua_deepseek(model_engine, token, messages)
+        print("messages:", messages)
+        print("*******************")
+        print("generated_cot:", generated_cot)
+
+        # 保存生成的 CoT 数据
+        cot_data.append({
+            "instruction": f"你正在扮演{role}，请以{role}的身份回答问题\n",
+            "input": query,
+            "chosen": answer,
+            "rejected": "",
+            "cot": generated_cot.strip(),
+            "history": []
+        })
+
+    # 保存为 JSONL 文件
+    save_jsonl(cot_data, cot_path)
+    print(f"Saved Anti CoT data to {cot_path}")
 
 def generate_style(role):
     """
@@ -892,23 +1034,24 @@ def main(world, role, model_engine, token):
     # convert_to_conversation_full(role, chosen_path, full_path, model_engine, token) # 这里会调用 DeepSeek 模型
     
     # 【访谈类数据】用于Knowledge部分
-    generate_world_statements(world, model_engine, token) # 这里会调用 DeepSeek 模型
-    generate_world_queries(world, model_engine, token) # 这里会调用 DeepSeek 模型
-    generate_role_statements(role, model_engine, token) # 这里会调用 DeepSeek 模型
-    generate_role_queries_v2(role, model_engine, token) # 这里会调用 DeepSeek 模型
-    # shuffle_and_save(f"{OUTPUT_PATH_RECALL}/*_recall.jsonl", f"{OUTPUT_PATH_BASE}/{world}_{role}_shuffle.json") 这里有bug，不能直接shuffle，会把不同人混在一起。
-    shuffle_and_save_world([role], world)
+    # generate_world_statements(world, model_engine, token) # 这里会调用 DeepSeek 模型
+    # generate_world_queries(world, model_engine, token) # 这里会调用 DeepSeek 模型
+    # generate_role_statements(role, model_engine, token) # 这里会调用 DeepSeek 模型
+    # generate_role_queries_v2(role, model_engine, token) # 这里会调用 DeepSeek 模型
+    # shuffle_and_save_world([role], world) 
 
 
     # 【访谈类数据】用于CoT部分
     generate_answer(role, model_engine, token) # 这里会调用 DeepSeek 模型
-    generate_cot(role, model_engine, token) # 这里会调用 DeepSeek 模型
-    # shuffle_and_save(f"{OUTPUT_PATH_COT}/{role}_*.jsonl", f"{OUTPUT_PATH_BASE}/{role}_cot_shuffle.json") # 不是shuffle，而是jsonl->json
+    generate_role_anti_queries(world, role, model_engine, token) # 这里会调用 DeepSeek 模型
+    generate_cot(world, role, model_engine, token) # 这里会调用 DeepSeek 模型
+    generate_anti_cot(world, role, model_engine, token) # 这里会调用 DeepSeek 模型
+    shuffle_and_save(f"{OUTPUT_PATH_COT}/{role}_*.jsonl", f"{OUTPUT_PATH_BASE}/{role}_cot_shuffle.json") # 不是shuffle，而是jsonl->json
     
 
 # 示例调用
-main("家有儿女", "刘星", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDgxMjQ5NCwiZXhwIjoxNzQ0ODM0MDk0fQ.qIBgt20u3LTiq1UmNKLPJ5Bl7EQlojOFK4AnbTZEDok")
-main("家有儿女", "刘梅", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDgxMjQ5NCwiZXhwIjoxNzQ0ODM0MDk0fQ.qIBgt20u3LTiq1UmNKLPJ5Bl7EQlojOFK4AnbTZEDok")
-main("家有儿女", "夏东海", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDgxMjQ5NCwiZXhwIjoxNzQ0ODM0MDk0fQ.qIBgt20u3LTiq1UmNKLPJ5Bl7EQlojOFK4AnbTZEDok")
-main("家有儿女", "小雨", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDgxMjQ5NCwiZXhwIjoxNzQ0ODM0MDk0fQ.qIBgt20u3LTiq1UmNKLPJ5Bl7EQlojOFK4AnbTZEDok")
-main("家有儿女", "小雪", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDgxMjQ5NCwiZXhwIjoxNzQ0ODM0MDk0fQ.qIBgt20u3LTiq1UmNKLPJ5Bl7EQlojOFK4AnbTZEDok")
+main("家有儿女", "刘星", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDg3NTcyOSwiZXhwIjoxNzQ0ODk3MzI5fQ.qK8gdDn4xPReFSOO8o2WuGmQhcQcbvAOBp1GCpTItHM")
+main("家有儿女", "刘梅", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDg3NTcyOSwiZXhwIjoxNzQ0ODk3MzI5fQ.qK8gdDn4xPReFSOO8o2WuGmQhcQcbvAOBp1GCpTItHM")
+main("家有儿女", "夏东海", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDg3NTcyOSwiZXhwIjoxNzQ0ODk3MzI5fQ.qK8gdDn4xPReFSOO8o2WuGmQhcQcbvAOBp1GCpTItHM")
+main("家有儿女", "小雨", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDg3NTcyOSwiZXhwIjoxNzQ0ODk3MzI5fQ.qK8gdDn4xPReFSOO8o2WuGmQhcQcbvAOBp1GCpTItHM")
+main("家有儿女", "小雪", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDg3NTcyOSwiZXhwIjoxNzQ0ODk3MzI5fQ.qK8gdDn4xPReFSOO8o2WuGmQhcQcbvAOBp1GCpTItHM")
