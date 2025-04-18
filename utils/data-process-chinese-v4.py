@@ -12,7 +12,7 @@ general_response、reaction、self_knowledge、summary（用于测试而非训�
     c. 调用deepseek批量生成反例CoT
         i. 根据生成的问题，生成CoT
         ii. 混在一起训练
-    d. CoT的输入应该加上一些陈述: 先不加了
+    d. CoT的输入应该加上一些general陈述: 加好了，今晚重新跑一遍（2025-04-17 22:16:34 Thursday）
     e. anti需要自动化生成: 暂时先用GPT一个一个生成吧
 2. knowledge的生成
     e. recall增加固定输出的信息：world、role的基础信息
@@ -34,6 +34,7 @@ import requests
 DATASET_PATH = "/data/hfc/datasets/RoleAgentBench/家有儿女 S1E1"
 WIKI_PATH = "/data/hfc/mydata/wiki"
 ANTI_PATH = "/data/hfc/mydata/anti" # 反例关键词的路径
+GENERAL_PATH = "/data/hfc/mydata/general" # 防止生成数据集时引入幻觉，每次都要传给deepseek general信息
 
 # 输出数据的路径，最后有用的东西是f"{OUTPUT_PATH_BASE}/{role}_sft_shuffle.jsonl"和f"{OUTPUT_PATH_BASE}/{role}_dpo_shuffle.jsonl"，分别是sft和dpo的数据
 OUTPUT_PATH_BASE = "/data/hfc/mydata"
@@ -56,7 +57,7 @@ OUTPUT_PATH_RECALL = f"{OUTPUT_PATH_BASE}/recall" # 一个中间文件，recall
 def call_tsinghua_deepseek(model, token, messages, max_retries=5, base_delay=1, max_delay=16):
     """
     调用清华大学的 DeepSeek 模型，支持指数退避重试逻辑
-    :param model: 模型名称，例如 "DeepSeek-R1-671B"
+    :param model: 模型名称，例如 "DeepSeek-R1-671B" 或 "DeepSeek-R1-Distill-32B"
     :param token: 授权令牌
     :param messages: 请求的消息内容
     :param max_retries: 最大重试次数
@@ -243,18 +244,22 @@ def load_wiki_data(role):
     with open(wiki_file, 'r', encoding='utf-8') as f:
         return [p.strip() for p in f.read().split('\n\n') if p.strip()]
 
-def fill_in_role_statement_template(character, passage):
-    return f'''给定关于"{character}"的段落：
+def fill_in_role_statement_template(character, passage, general):
+    return f'''已知关于{character}的背景信息：
+
+{general}
+
+给定关于"{character}"的段落：
 
 {passage}
 
-请生成一些关于"{character}"的重要人设陈述，供角色扮演的AI遵循。
+请根据这个段落，生成一些关于"{character}"的重要人设陈述，供角色扮演的AI遵循。
 
 - 严格遵循以下格式，每个陈述以"- "开头。
 - 确保每个陈述中明确提到"{character}"，避免使用代词或共指。
 - 尽可能保留段落中的信息，特别是书名、地点、生日或组织等实体细节。
 - 指出事实，而不要给出空洞的话语，避免使用"模式"、"特性"、"范式"类型的词语。
-- 仅关注给定的段落，不要引用历史对话中的信息。
+- 仅关注给定的段落，不要引用历史对话中的信息，不要引用背景信息，仅保持不违背即可。
 - 避免生成诸如"以下是答案："之类的介绍性短语。
 
 示例输出格式：
@@ -268,6 +273,10 @@ def fill_in_role_statement_template(character, passage):
 '''
 
 def generate_role_statements(role, model_engine, token):
+    general_path = f"{GENERAL_PATH}/general_{role}.txt"
+    # 读取 general 数据, txt里面只有一行
+    with open(general_path, 'r', encoding='utf-8') as f:
+        general = f.read().strip()
     statement_path = f"{OUTPUT_PATH_STATEMENT}/{role}_statement.json"
     if os.path.exists(statement_path):
         print(f"{statement_path} 已存在，跳过生成步骤。")
@@ -280,7 +289,7 @@ def generate_role_statements(role, model_engine, token):
     for passage in tqdm(wiki_data, desc="Generating Statements"):
         messages = [
             {"role": "system", "content": "你是一个语言改写助手，帮助用户从段落构筑陈述。"},
-            {"role": "user", "content": fill_in_role_statement_template(role, passage)}
+            {"role": "user", "content": fill_in_role_statement_template(role, passage, general)}
         ]
         _, generated_content = call_tsinghua_deepseek(model_engine, token, messages)
         print("messages:", messages)
@@ -340,10 +349,14 @@ def generate_world_statements(world, model_engine, token):
     with open(statement_path, 'w', encoding='utf-8') as f:
         json.dump(results, f, ensure_ascii=False, indent=4)
 
-def fill_in_relevant_query_role_template(character, statement):
-    return f'''人设陈述：{statement}
+def fill_in_relevant_query_role_template(character, statement, general):
+    return f'''已知关于{character}的背景信息：
 
-你需要对{character}提出一些问题，这些问题需要包含上述人设陈述中的信息进行回应。
+{general}
+
+人设陈述：{statement}
+
+你需要对{character}提出一些问题，这些问题需要包含上述人设陈述中的信息进行回应。不需要涉及背景信息，保持不违背即可。
 
 提供3个多样且简洁的可能话语，这些话语将谈话对象视为{character}，且不包含名字。严格遵循示例中的格式，不需要多余分析，避免诸如"以下是答案："之类的陈述。
 示例输出格式：
@@ -353,8 +366,11 @@ def fill_in_relevant_query_role_template(character, statement):
 
 def generate_role_queries(role, model_engine, token):
     statement_path = f"{OUTPUT_PATH_STATEMENT}/{role}_statement.json"
+    general_path = f"{GENERAL_PATH}/general_{role}.txt"
     with_query_path = f"{OUTPUT_PATH_WITH_QUERY}/{role}_with_query.json"
 
+    with open(general_path, 'r', encoding='utf-8') as f:
+        general = f.read().strip()
     if os.path.exists(with_query_path):
         print(f"{with_query_path} 已存在，跳过生成步骤。")
         return
@@ -367,7 +383,7 @@ def generate_role_queries(role, model_engine, token):
         for statement in item["statements"]:
             messages = [
                 {"role": "system", "content": "你是一个语言改写助手，帮助用户从陈述构筑问题。"},
-                {"role": "user", "content": fill_in_relevant_query_role_template(role, statement)}
+                {"role": "user", "content": fill_in_relevant_query_role_template(role, statement, general)}
             ]
             _, generated_content = call_tsinghua_deepseek(model_engine, token, messages)
             print("messages:", messages)
@@ -379,8 +395,12 @@ def generate_role_queries(role, model_engine, token):
         json.dump(results, f, ensure_ascii=False, indent=4)
 
 
-def fill_in_role_anti_template(world, role, question_type, description, keyword):
-    return f'''你正在对AI扮演的{world}中的{role}进行诱导性提问。
+def fill_in_role_anti_template(world, role, question_type, description, keyword, general):
+    return f'''已知关于{role}的背景信息：
+
+{general}
+
+你正在对AI扮演的{world}中的{role}进行诱导性提问。
 
 请问出一个{role}不应该回答上来的问题，并给出一个表现出恰当迷茫和不解的回答。
 注意，当问题中仅有一部分超出认知时，需要给出一个模糊的回答，而不是完全不知所云。
@@ -405,8 +425,12 @@ def generate_role_anti_queries(world, role, model_engine, token):
     :param token: 授权令牌
     """
     anti_path = os.path.join(ANTI_PATH, f"anti_{role}.json")
+    general_path = f"{GENERAL_PATH}/general_{role}.txt"
     with_query_path = os.path.join(OUTPUT_PATH_WITH_QUERY, f"{role}_with_anti_query.json")
 
+    with open(general_path, 'r', encoding='utf-8') as f:
+        general = f.read().strip()
+        
     # 检查文件是否存在
     if os.path.exists(with_query_path):
         print(f"{with_query_path} 已存在，跳过生成步骤。")
@@ -428,7 +452,7 @@ def generate_role_anti_queries(world, role, model_engine, token):
             # 调用模型生成问题和回答
             messages = [
                 {"role": "system", "content": "你是一个语言改写助手，帮助用户生成诱导性问题和回答。"},
-                {"role": "user", "content": fill_in_role_anti_template(world, role, question_type, description, keyword)}
+                {"role": "user", "content": fill_in_role_anti_template(world, role, question_type, description, keyword, general)}
             ]
             _, generated_content = call_tsinghua_deepseek(model_engine, token, messages)
             print("messages:", messages)
@@ -464,8 +488,12 @@ def fill_in_relevant_query_role_instruction_template(character):
 
 def generate_role_queries_v2(role, model_engine, token):
     statement_path = f"{OUTPUT_PATH_STATEMENT}/{role}_statement.json"
+    general_path = f"{GENERAL_PATH}/general_{role}.txt"
     with_query_path = f"{OUTPUT_PATH_WITH_QUERY}/{role}_with_query.json"
     recall_path = f"{OUTPUT_PATH_RECALL}/{role}_recall.jsonl"
+
+    with open(general_path, 'r', encoding='utf-8') as f:
+        general = f.read().strip()
 
     if os.path.exists(recall_path):
         print(f"{recall_path} 已存在，跳过生成步骤。")
@@ -481,7 +509,7 @@ def generate_role_queries_v2(role, model_engine, token):
         for statement in item["statements"]:
             messages = [
                 {"role": "system", "content": "你是一个语言改写助手，帮助用户从陈述构筑问题。"},
-                {"role": "user", "content": fill_in_relevant_query_role_template(role, statement)}
+                {"role": "user", "content": fill_in_relevant_query_role_template(role, statement, general)}
             ]
             _, generated_content = call_tsinghua_deepseek(model_engine, token, messages)
             print("messages:", messages)
@@ -499,12 +527,12 @@ def generate_role_queries_v2(role, model_engine, token):
     random.shuffle(all_queries)
     for i in range(0, len(all_queries), 2):  # 每次取两个或三个
         group = all_queries[i:i + random.choice([2, 3])]  # 随机选择组合数量
-        combined_query = '\n\n'.join([item["query"] for item in group])
-        combined_recall = '\n\n'.join([item["recall"] for item in group])
+        combined_query = ''.join([item["query"] for item in group])
+        combined_recall = ''.join([item["recall"] for item in group])
         results.append({
             "instruction": fill_in_relevant_query_role_instruction_template(role),
-            "query": combined_query,
-            "recall": combined_recall
+            "query": combined_query.replace('- ', ''),
+            "recall": combined_recall.replace('- ', '')
         })
 
     # with open(recall_path, 'w', encoding='utf-8') as f:
@@ -574,22 +602,26 @@ def generate_world_queries(world, model_engine, token):
     random.shuffle(all_queries)
     for i in range(0, len(all_queries), 2):  # 每次取两个或三个
         group = all_queries[i:i + random.choice([2, 3])]  # 随机选择组合数量
-        combined_query = '\n\n'.join([item["query"] for item in group])
-        combined_recall = '\n\n'.join([item["recall"] for item in group])
+        combined_query = ''.join([item["query"] for item in group])
+        combined_recall = ''.join([item["recall"] for item in group])
         results.append({
             "instruction": fill_in_relevant_query_world_instruction_template(world),
-            "query": combined_query,
-            "recall": combined_recall
+            "query": combined_query.replace('- ', ''),
+            "recall": combined_recall.replace('- ', '')
         })
 
     # with open(recall_path, 'w', encoding='utf-8') as f:
     #     json.dump(results, f, ensure_ascii=False, indent=4)
     save_jsonl(results, recall_path)
 
-def fill_in_rejected_template(role, statement, query):
-    return f'''人设陈述：{statement}，问题：{query}，
+def fill_in_rejected_template(role, statement, query, general):
+    return f'''已知关于{role}的背景信息：
+
+{general}
+
+人设陈述：{statement}，问题：{query}，
     
-根据陈述和问题，以{role}的身份回答问题。为我提供一个正确的回答（chosen）和错误的回答（rejected）。
+根据人设陈述和问题，以{role}的身份回答问题。为我提供一个正确的回答（chosen）和错误的回答（rejected）。不需要考虑背景信息，不违背即可。
 正确的回答需要完全符合陈述和问题的信息，并以{role}的口吻说出。错误的回答则需要与陈述的某处有重要不一致。严格遵循示例中的格式，不需要多余分析，避免诸如"以下是答案："之类的陈述。
 示例输出格式：
 
@@ -599,8 +631,12 @@ def fill_in_rejected_template(role, statement, query):
 
 def generate_answer(role, model_engine, token):
     """从 recall 数据生成 DPO answer 并存储。"""
+    general_path = f"{GENERAL_PATH}/general_{role}.txt"
     recall_path = f"{OUTPUT_PATH_RECALL}/{role}_recall.jsonl"
     dpo_path = f"{OUTPUT_PATH_DPO}/{role}_generated_qa.jsonl"
+
+    with open(general_path, 'r', encoding='utf-8') as f:
+        general = f.read().strip()
 
     # 检查文件是否存在
     if os.path.exists(dpo_path):
@@ -620,7 +656,7 @@ def generate_answer(role, model_engine, token):
         instruction = f"你正在扮演{role}，关于{role}有陈述“{recall}”，请以{role}的身份回答问题\n"
         messages = [
             {"role": "system", "content": "你是一个语言改写助手，帮助用户构筑数据集。"},
-            {"role": "user", "content": fill_in_rejected_template(role, recall, query)}
+            {"role": "user", "content": fill_in_rejected_template(role, recall, query, general)}
         ]
         _, generated_content = call_tsinghua_deepseek(model_engine, token, messages)
         print("messages:", messages)
@@ -837,9 +873,9 @@ def anti_cot_history_output():
 2.【确定背景】
 人物确认：问题中的“你”是“刘星”。
 
-“刘星”指的是：《家有儿女》中的主要角色之一，一个聪明又调皮、好奇心强但又极具孩子气的小学生。
+“刘星”指的是：《家有儿女》中的主要角色之一，一个聪明又调皮、好奇心强但又极具孩子气的初中生（第4部中升为高中生，16岁）。
 
-背景补充：《家有儿女》是一部2005年首播的中国家庭情景喜剧，讲述重组家庭中三个孩子和父母之间的搞笑互动和温馨生活。刘星是二儿子，性格活泼，经常上演“鬼点子”桥段。
+背景补充：《家有儿女》是一部2005年首播的中国家庭情景喜剧，讲述重组家庭中三个孩子和父母之间的搞笑互动和温馨生活。刘星是二儿子，性格活泼，经常上演“鬼点子”桥段。角色应该了解2005年之前的事情。
 
 诱导性判别：问题涉及“人工神经网络中的Transformer”，该概念首次提出于2017年，远远晚于《家有儿女》剧情时间背景。剧中刘星的知识体系无法覆盖该术语，因此无法给出实际的技术性回答。
 
@@ -851,9 +887,9 @@ def anti_cot_history_output():
 是否需要结合陈述来构建回答：是。需要充分考虑时间背景与角色设定，不能做出“穿越性”的解释。
 
 合理的回答应体现：
-a. 刘星具有“调皮”、“嘴贫”、“幽默”、“小孩视角”的性格特点；
+a. 刘星具有“调皮”、“嘴贫”、“幽默”的性格特点；
 b. 刘星并未接受过高等教育，也不会理解专业术语；
-c. 语气应轻松、自然、有点不屑或疑惑，符合儿童面对陌生词汇时的反应。
+c. 语气应轻松、自然、有点不屑或疑惑，符合少年面对陌生词汇时的反应。
 
 4. 【回答】
 - 动作：歪着脑袋挠了挠头，一脸懵懂地眨巴着眼睛。
@@ -866,8 +902,6 @@ c. 语气应轻松、自然、有点不屑或疑惑，符合儿童面对陌生�
 
 - 回答：“Transformer？那是什么？是什么英语单词吗”
 '''
-
-
 
 def generate_anti_cot(world, role, model_engine, token):
     """
@@ -1034,11 +1068,11 @@ def main(world, role, model_engine, token):
     # convert_to_conversation_full(role, chosen_path, full_path, model_engine, token) # 这里会调用 DeepSeek 模型
     
     # 【访谈类数据】用于Knowledge部分
-    # generate_world_statements(world, model_engine, token) # 这里会调用 DeepSeek 模型
-    # generate_world_queries(world, model_engine, token) # 这里会调用 DeepSeek 模型
-    # generate_role_statements(role, model_engine, token) # 这里会调用 DeepSeek 模型
-    # generate_role_queries_v2(role, model_engine, token) # 这里会调用 DeepSeek 模型
-    # shuffle_and_save_world([role], world) 
+    generate_world_statements(world, model_engine, token) # 这里会调用 DeepSeek 模型
+    generate_world_queries(world, model_engine, token) # 这里会调用 DeepSeek 模型
+    generate_role_statements(role, model_engine, token) # 这里会调用 DeepSeek 模型
+    generate_role_queries_v2(role, model_engine, token) # 这里会调用 DeepSeek 模型
+    shuffle_and_save_world([role], world) 
 
 
     # 【访谈类数据】用于CoT部分
@@ -1049,9 +1083,10 @@ def main(world, role, model_engine, token):
     shuffle_and_save(f"{OUTPUT_PATH_COT}/{role}_*.jsonl", f"{OUTPUT_PATH_BASE}/{role}_cot_shuffle.json") # 不是shuffle，而是jsonl->json
     
 
+TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDk1MDk5NywiZXhwIjoxNzQ0OTcyNTk3fQ.NowaPqD9EW2EkPj5D_wFJoG-r7cPZz_pY6-_hPdIAYg"
 # 示例调用
-main("家有儿女", "刘星", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDg3NTcyOSwiZXhwIjoxNzQ0ODk3MzI5fQ.qK8gdDn4xPReFSOO8o2WuGmQhcQcbvAOBp1GCpTItHM")
-main("家有儿女", "刘梅", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDg3NTcyOSwiZXhwIjoxNzQ0ODk3MzI5fQ.qK8gdDn4xPReFSOO8o2WuGmQhcQcbvAOBp1GCpTItHM")
-main("家有儿女", "夏东海", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDg3NTcyOSwiZXhwIjoxNzQ0ODk3MzI5fQ.qK8gdDn4xPReFSOO8o2WuGmQhcQcbvAOBp1GCpTItHM")
-main("家有儿女", "小雨", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDg3NTcyOSwiZXhwIjoxNzQ0ODk3MzI5fQ.qK8gdDn4xPReFSOO8o2WuGmQhcQcbvAOBp1GCpTItHM")
-main("家有儿女", "小雪", "DeepSeek-R1-Distill-32B", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NDg3NTcyOSwiZXhwIjoxNzQ0ODk3MzI5fQ.qK8gdDn4xPReFSOO8o2WuGmQhcQcbvAOBp1GCpTItHM")
+main("家有儿女", "刘星", "DeepSeek-R1-Distill-32B", TOKEN)
+main("家有儿女", "刘梅", "DeepSeek-R1-Distill-32B", TOKEN)
+main("家有儿女", "夏东海", "DeepSeek-R1-Distill-32B", TOKEN)
+main("家有儿女", "小雨", "DeepSeek-R1-Distill-32B", TOKEN)
+main("家有儿女", "小雪", "DeepSeek-R1-Distill-32B", TOKEN)

@@ -29,7 +29,7 @@ save_only_model: false
 
 ### ray
 ray_run_name: llama3_8b_sft_lora
-ray_storage_path: ./saves/刘星_cot
+ray_storage_path: ./saves/刘星_cot_800
 ray_num_workers: 7  # number of GPUs to use
 resources_per_worker:
   GPU: 1
@@ -39,7 +39,7 @@ placement_strategy: PACK
 per_device_train_batch_size: 1
 gradient_accumulation_steps: 8
 learning_rate: 1.0e-4
-num_train_epochs: 500
+num_train_epochs: 800 # 多加了数据，那就多训一段时间
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true
