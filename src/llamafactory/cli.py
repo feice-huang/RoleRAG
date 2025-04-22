@@ -19,7 +19,7 @@ from enum import Enum, unique
 
 from . import launcher
 from .api.app import run_api
-from .chat.chat_model import run_chat
+from .chat.chat_model import run_chat, run_cot
 from .eval.evaluator import run_eval
 from .extras import logging
 from .extras.env import VERSION, print_env
@@ -58,6 +58,7 @@ WELCOME = (
 logger = logging.get_logger(__name__)
 
 
+# modified feice Apr 19, 2025 at 19:58
 @unique
 class Command(str, Enum):
     API = "api"
@@ -70,6 +71,7 @@ class Command(str, Enum):
     WEBUI = "webui"
     VER = "version"
     HELP = "help"
+    COT = "cot"
 
 
 def main():
@@ -78,6 +80,9 @@ def main():
         run_api()
     elif command == Command.CHAT:
         run_chat()
+    # modified feice Apr 19, 2025 at 19:59
+    elif command == Command.COT:
+        run_cot()
     elif command == Command.ENV:
         print_env()
     elif command == Command.EVAL:
@@ -125,6 +130,7 @@ def main():
         print(USAGE)
     else:
         print(f"Unknown command: {command}.\n{USAGE}")
+        print(command)
 
 
 if __name__ == "__main__":

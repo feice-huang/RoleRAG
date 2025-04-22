@@ -12,9 +12,9 @@ import torch
 
 
 class Config:
-    MODEL_PATH = "/data3/dxw/data/sft_role_megred/"  # SFT模型路径
-    EMBEDDING_MODEL_PATH = "/data3/dxw/model/text2vec-large-chinese"  # 嵌入模型路径
-    DATA_PATH = "/data3/dxw/role/profile.txt"  # 数据文件路径
+    MODEL_PATH = "/data/hfc/checkpoints/Llama-3.1-8B-Instruct"  # SFT模型路径
+    EMBEDDING_MODEL_PATH = "/data/hfc/checkpoints/text2vec-large-chinese"  # 嵌入模型路径
+    DATA_PATH = "/data/hfc/mydata/wiki/wiki_刘星.txt"  # 数据文件路径
 
     LLM_DEVICE = "cuda:2" if torch.cuda.is_available() else "cpu"
     EMBEDDING_DEVICE = "cuda:3" if torch.cuda.is_available() else "cpu"

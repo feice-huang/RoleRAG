@@ -182,3 +182,80 @@ def run_chat() -> None:
             response += new_text
         print()
         messages.append({"role": "assistant", "content": response})
+
+# modified feice Apr 19, 2025 at 20:04
+def run_cot() -> None:
+    if os.name != "nt":
+        try:
+            import readline  # noqa: F401
+        except ImportError:
+            print("Install `readline` for a better experience.")
+
+    # 初始化三个模型
+    print("正在加载模型...")
+    recall_model = ChatModel({
+        "model_name_or_path": "/data/hfc/checkpoints/Llama-3.1-8B-Instruct",
+        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_recall_800/llama3_8b_sft_lora/TorchTrainer_e8f93_00000_0_2025-04-18_13-13-48/checkpoint_000001/checkpoint"
+    })
+    cot_model = ChatModel({
+        "model_name_or_path": "/data/hfc/checkpoints/Llama-3.1-8B-Instruct",
+        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_cot_800/llama3_8b_sft_lora/TorchTrainer_8d771_00000_0_2025-04-17_18-20-14/checkpoint_000003/checkpoint"
+    })
+    style_model = ChatModel({
+        "model_name_or_path": "/data/hfc/checkpoints/Llama-3.1-8B-Instruct",
+        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_style/llama3_8b_sft_lora/TorchTrainer_9fdfa_00000_0_2025-04-16_18-36-15/checkpoint_000000/checkpoint"
+    })
+    print("模型加载完成！")
+
+    # 定义每个模型的固定前缀
+    recall_prefix = "下面是一段关于家有儿女和刘星的问题，请为我提供用于回复这些问题的信息。\n\n按问题涉及的信息不同，提供数个多样且简洁的可能信息。严格遵循示例中的格式，不需要多余分析，避免诸如\"以下是答案：\"之类的陈述。\n示例输出格式：\n\n……\n…\n\n问题："
+    cot_prefix = "你正在扮演刘星，请以刘星的身份回答问题\n\n问题："
+    additional = "\n\n可能的参考信息："
+    style_prefix = "你正在扮演 刘星，你需要将下面的句子转写成 刘星 的口吻\n"
+
+    # 定义问题列表
+    questions = [
+        "什么是人工智能？",
+        "刘星为什么喜欢捣蛋？"
+    ]
+
+    for question in questions:
+        print(f"\nUser: {question}")
+
+        # 阶段 1：Recall 模型
+        print("recall_prefix + question: ", recall_prefix + question)
+        recall_messages = [{"role": "user", "content": recall_prefix + question}]
+        print("Recall Assistant: ", end="", flush=True)
+        recall_response = ""
+        for new_text in recall_model.stream_chat(recall_messages):
+            print(new_text, end="", flush=True)
+            recall_response += new_text
+        print("\n"+"="*20)
+        torch_gc()  # 清理显存
+
+        # 阶段 2：CoT 模型
+        print("cot_prefix + recall_response: ", cot_prefix + question + additional + recall_response)
+        cot_messages = [{"role": "user", "content": cot_prefix + question + additional + recall_response}]
+        print("CoT Assistant: ", end="", flush=True)
+        cot_response = ""
+        for new_text in cot_model.stream_chat(cot_messages):
+            print(new_text, end="", flush=True)
+            cot_response += new_text
+        print("\n"+"="*20)
+        torch_gc()  # 清理显存
+
+        # 阶段 3：Style 模型
+        cot_last_response = cot_response.split("\n")[-1].strip()
+        print("style_prefix + cot_last_response: ", style_prefix + cot_last_response)
+        style_messages = [{"role": "user", "content": style_prefix + cot_last_response}]
+        # style_messages = [{"role": "user", "content": style_prefix + cot_response}]
+        print("Style Assistant: ", end="", flush=True)
+        style_response = ""
+        for new_text in style_model.stream_chat(style_messages):
+            print(new_text, end="", flush=True)
+            style_response += new_text
+        print("\n"+"="*20)
+        torch_gc()  # 清理显存
+
+        print("Final Output: ", style_response)
+        print("History has been removed.\n")

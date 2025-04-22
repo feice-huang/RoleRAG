@@ -2,12 +2,12 @@
 
 ### model
 model_name_or_path: /data/hfc/checkpoints/Llama-3.1-8B-Instruct
-adapter_name_or_path: /data/hfc/RoleRAG/saves/刘星_cot_800/llama3_8b_sft_lora/TorchTrainer_8d771_00000_0_2025-04-17_18-20-14/checkpoint_000003/checkpoint
+adapter_name_or_path: /data/hfc/RoleRAG/saves/刘星_recall_800/llama3_8b_sft_lora/TorchTrainer_e8f93_00000_0_2025-04-18_13-13-48/checkpoint_000001/checkpoint
 template: llama3
 trust_remote_code: true
 
 ### export
-export_dir: output/刘星_cot 
+export_dir: output/刘星_recall
 export_size: 5
 export_device: cpu
 export_legacy_format: false

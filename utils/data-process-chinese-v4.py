@@ -483,8 +483,8 @@ def fill_in_relevant_query_role_instruction_template(character):
 按问题涉及的信息不同，提供数个多样且简洁的可能信息。严格遵循示例中的格式，不需要多余分析，避免诸如"以下是答案："之类的陈述。
 示例输出格式：
 
-- 你是……吗？
-- 你如何看待……'''
+- {character}是……
+- {character}看待……'''
 
 def generate_role_queries_v2(role, model_engine, token):
     statement_path = f"{OUTPUT_PATH_STATEMENT}/{role}_statement.json"
