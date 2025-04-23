@@ -14,7 +14,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+# modified feice Apr 23, 2025 at 14:12
+将run_cot的第一步recall更换成网络搜索（Google Custom Search API），在函数内部设置代理以防止被墙。
 
+"""
 import asyncio
 import os
 from collections.abc import AsyncGenerator, Generator
@@ -183,6 +187,62 @@ def run_chat() -> None:
         print()
         messages.append({"role": "assistant", "content": response})
 
+# modified feice Apr 23, 2025 at 14:11
+import requests
+import time
+
+GOOGLE_API_URL = "https://www.googleapis.com/customsearch/v1"
+GOOGLE_API_KEY = "AIzaSyDO3hlUuK9CugxCIQf86czKk-_K_NeHvuA"  # 替换为你的 Google API 密钥
+GOOGLE_CX = "87b42182cc13c4b23"  # 替换为你的 Google Custom Search Engine ID
+
+def google_search(query, num_results=4, timeout=5):
+    """
+    使用 Google Custom Search JSON API 执行查询并返回结果。
+
+    :param query: 搜索的关键词或主题
+    :param num_results: 返回的搜索结果数量（默认 4）
+    :param timeout: 请求超时时间（默认 5 秒）
+    :return: 检索到的文本和搜索耗时
+    """
+    params = {
+        "q": query,
+        "key": GOOGLE_API_KEY,
+        "cx": GOOGLE_CX,
+        "num": num_results
+    }
+
+    # 设置代理
+    proxies = {
+        "http": "http://219.223.184.164:7890",
+        "https": "http://219.223.184.164:7890"
+    }
+
+    try:
+        start_time = time.time()
+        response = requests.get(GOOGLE_API_URL, params=params, timeout=timeout, proxies=proxies)
+        response.raise_for_status()  # 如果响应状态码不是 200，抛出异常
+        search_time = time.time() - start_time
+
+        # 解析响应 JSON
+        response_json = response.json()
+        items = response_json.get("items", [])
+        
+        # 提取搜索结果
+        results = []
+        for item in items:
+            title = item.get("title", "")
+            snippet = item.get("snippet", "")
+            results.append(f"{title}: {snippet}")
+        
+        # 将结果合并为单个字符串
+        result_text = " ".join(results)
+        return result_text, search_time
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error during Google search: {e}")
+        return "", 0
+
+
 # modified feice Apr 19, 2025 at 20:04
 def run_cot() -> None:
     if os.name != "nt":
@@ -193,9 +253,9 @@ def run_cot() -> None:
 
     # 初始化三个模型
     print("正在加载模型...")
-    recall_model = ChatModel({
-        "model_name_or_path": "/data/hfc/checkpoints/Llama-3.1-8B-Instruct",
-        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_recall_800/llama3_8b_sft_lora/TorchTrainer_e8f93_00000_0_2025-04-18_13-13-48/checkpoint_000001/checkpoint"
+    rewrite_model = ChatModel({
+        "model_name_or_path": "/data/hfc/checkpoints/gemma-3-12b-it",
+        "template": "gemma3"
     })
     cot_model = ChatModel({
         "model_name_or_path": "/data/hfc/checkpoints/Llama-3.1-8B-Instruct",
@@ -208,15 +268,15 @@ def run_cot() -> None:
     print("模型加载完成！")
 
     # 定义每个模型的固定前缀
-    recall_prefix = "下面是一段关于家有儿女和刘星的问题，请为我提供用于回复这些问题的信息。\n\n按问题涉及的信息不同，提供数个多样且简洁的可能信息。严格遵循示例中的格式，不需要多余分析，避免诸如\"以下是答案：\"之类的陈述。\n示例输出格式：\n\n……\n…\n\n问题："
+    recall_prefix = "下面是一段关于家有儿女和刘星的问题，这段问题将“你”视为“刘星”。请为我将问题转化为适用于网络搜索的陈述，将所有代词替换为实体。严格遵循示例中的格式，不需要多余分析，避免诸如\"以下是答案：\"之类的陈述。\n示例输出：你喜欢你妈妈吗？\n示例输出格式：刘星喜欢刘梅吗？\n\n需要转化的问题："
     cot_prefix = "你正在扮演刘星，请以刘星的身份回答问题\n\n问题："
     additional = "\n\n可能的参考信息："
     style_prefix = "你正在扮演 刘星，你需要将下面的句子转写成 刘星 的口吻\n"
 
     # 定义问题列表
     questions = [
-        "什么是人工智能？",
-        "刘星为什么喜欢捣蛋？"
+        "你如何看待人工智能？",
+        "你为什么喜欢捣蛋？"
     ]
 
     for question in questions:
@@ -226,16 +286,19 @@ def run_cot() -> None:
         print("recall_prefix + question: ", recall_prefix + question)
         recall_messages = [{"role": "user", "content": recall_prefix + question}]
         print("Recall Assistant: ", end="", flush=True)
-        recall_response = ""
-        for new_text in recall_model.stream_chat(recall_messages):
+        observation = ""
+        for new_text in rewrite_model.stream_chat(recall_messages):
             print(new_text, end="", flush=True)
-            recall_response += new_text
+            observation += new_text
         print("\n"+"="*20)
         torch_gc()  # 清理显存
+        ans, _ = google_search(observation)
+        observation = observation + "\n" + ans
+
 
         # 阶段 2：CoT 模型
-        print("cot_prefix + recall_response: ", cot_prefix + question + additional + recall_response)
-        cot_messages = [{"role": "user", "content": cot_prefix + question + additional + recall_response}]
+        print("cot_prefix + recall_response: ", cot_prefix + question + additional + observation)
+        cot_messages = [{"role": "user", "content": cot_prefix + question + additional + observation}]
         print("CoT Assistant: ", end="", flush=True)
         cot_response = ""
         for new_text in cot_model.stream_chat(cot_messages):
