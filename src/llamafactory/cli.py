@@ -38,7 +38,7 @@ USAGE = (
 def main():
     from . import launcher
     from .api.app import run_api
-    from .chat.chat_model import run_chat, run_cot
+    from .chat.chat_model import run_chat, run_cot, run_rag
     from .eval.evaluator import run_eval
     from .extras import logging
     from .extras.env import VERSION, print_env
@@ -70,6 +70,7 @@ def main():
         "webchat": run_web_demo,
         "webui": run_web_ui,
         "cot": run_cot,
+        "rag": run_rag,
         "version": partial(print, WELCOME),
         "help": partial(print, USAGE),
     }

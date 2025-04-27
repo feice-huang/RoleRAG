@@ -242,6 +242,31 @@ def google_search(query, num_results=4, timeout=5):
         print(f"Error during Google search: {e}")
         return "", 0
 
+# 定义每个任务的system以及instruction prompt
+def get_recall_prompt(question: str) -> str:
+    return f"""下面是一段关于家有儿女和刘星的问题，这段问题将“你”视为“刘星”。
+请为我将问题转化为适用于网络搜索的陈述，将所有代词替换为实体。
+严格遵循示例中的格式，不需要多余分析，避免诸如\"以下是答案：\"之类的陈述。\n
+
+示例输入：你喜欢你妈妈吗？
+示例输出格式：刘星喜欢刘梅吗？
+
+需要转化的问题：
+{question}
+"""
+
+def get_cot_prompt(question: str, observation: str) -> str:
+    return f"""你正在扮演刘星，请以刘星的身份回答问题
+问题：
+{question}
+可能的参考信息：
+{observation}
+"""
+
+def get_style_prompt(role, question: str) -> str:
+    return f"""你正在扮演 {role}，你需要将下面的句子转写成 {role} 的口吻
+{question}
+"""
 
 # modified feice Apr 19, 2025 at 20:04
 def run_cot() -> None:
@@ -254,24 +279,20 @@ def run_cot() -> None:
     # 初始化三个模型
     print("正在加载模型...")
     rewrite_model = ChatModel({
-        "model_name_or_path": "/data/hfc/checkpoints/gemma-3-12b-it",
-        "template": "gemma3"
+        "model_name_or_path": "/data/hfc/checkpoints/GLM-4-9B-0414",
+        "template": "glm4"
     })
     cot_model = ChatModel({
-        "model_name_or_path": "/data/hfc/checkpoints/Llama-3.1-8B-Instruct",
-        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_cot_800/llama3_8b_sft_lora/TorchTrainer_8d771_00000_0_2025-04-17_18-20-14/checkpoint_000003/checkpoint"
+        "model_name_or_path": "/data/hfc/checkpoints/GLM-4-9B-0414",
+        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_glm4_cot_800/glm4_8b_sft_lora/TorchTrainer_a7d31_00000_0_2025-04-25_10-54-50/checkpoint_000000/checkpoint",
+        "template": "glm4"
     })
     style_model = ChatModel({
         "model_name_or_path": "/data/hfc/checkpoints/Llama-3.1-8B-Instruct",
-        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_style/llama3_8b_sft_lora/TorchTrainer_9fdfa_00000_0_2025-04-16_18-36-15/checkpoint_000000/checkpoint"
+        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_style/llama3_8b_sft_lora/TorchTrainer_9fdfa_00000_0_2025-04-16_18-36-15/checkpoint_000000/checkpoint",
+        "template": "llama3"
     })
     print("模型加载完成！")
-
-    # 定义每个模型的固定前缀
-    recall_prefix = "下面是一段关于家有儿女和刘星的问题，这段问题将“你”视为“刘星”。请为我将问题转化为适用于网络搜索的陈述，将所有代词替换为实体。严格遵循示例中的格式，不需要多余分析，避免诸如\"以下是答案：\"之类的陈述。\n示例输出：你喜欢你妈妈吗？\n示例输出格式：刘星喜欢刘梅吗？\n\n需要转化的问题："
-    cot_prefix = "你正在扮演刘星，请以刘星的身份回答问题\n\n问题："
-    additional = "\n\n可能的参考信息："
-    style_prefix = "你正在扮演 刘星，你需要将下面的句子转写成 刘星 的口吻\n"
 
     # 定义问题列表
     questions = [
@@ -283,25 +304,27 @@ def run_cot() -> None:
         print(f"\nUser: {question}")
 
         # 阶段 1：Recall 模型
-        print("recall_prefix + question: ", recall_prefix + question)
-        recall_messages = [{"role": "user", "content": recall_prefix + question}]
+        print("recall instruction: ", get_recall_prompt(question))
+        recall_messages = [{"role": "user", "content": get_recall_prompt(question)}]
         print("Recall Assistant: ", end="", flush=True)
         observation = ""
-        for new_text in rewrite_model.stream_chat(recall_messages):
+        for new_text in rewrite_model.stream_chat(recall_messages, system="你是一个人工智能问题重写助手，按照规则重写问题"):
             print(new_text, end="", flush=True)
             observation += new_text
         print("\n"+"="*20)
         torch_gc()  # 清理显存
         ans, _ = google_search(observation)
         observation = observation + "\n" + ans
+        # observation = "刘星，刘梅之子。初中生（在第四部升上高中生），成绩（尤其化学）常令刘梅头痛。身材看似“瘦弱”，体育倒很不错。爱好广泛但大多都只折腾一时。一家的活宝，大多数麻烦的制造者。为人仗义，脑子里经常有些新奇的想法，里面有好主意也有馊主意。"
+
 
 
         # 阶段 2：CoT 模型
-        print("cot_prefix + recall_response: ", cot_prefix + question + additional + observation)
-        cot_messages = [{"role": "user", "content": cot_prefix + question + additional + observation}]
+        print("cot instruction: ", get_cot_prompt(question, observation))
+        cot_messages = [{"role": "user", "content": get_cot_prompt(question, observation)}]
         print("CoT Assistant: ", end="", flush=True)
         cot_response = ""
-        for new_text in cot_model.stream_chat(cot_messages):
+        for new_text in cot_model.stream_chat(cot_messages, system="你是一个角色扮演专家，请以【问题重述】【实体确认】【逻辑推理】【分析回答】【最终回答】的顺序，以扮演角色的身份回答问题"):
             print(new_text, end="", flush=True)
             cot_response += new_text
         print("\n"+"="*20)
@@ -309,12 +332,12 @@ def run_cot() -> None:
 
         # 阶段 3：Style 模型
         cot_last_response = cot_response.split("\n")[-1].strip()
-        print("style_prefix + cot_last_response: ", style_prefix + cot_last_response)
-        style_messages = [{"role": "user", "content": style_prefix + cot_last_response}]
+        print("style instruction: ", get_style_prompt("刘星", cot_last_response))
+        style_messages = [{"role": "user", "content": get_style_prompt("刘星", cot_last_response)}]
         # style_messages = [{"role": "user", "content": style_prefix + cot_response}]
         print("Style Assistant: ", end="", flush=True)
         style_response = ""
-        for new_text in style_model.stream_chat(style_messages):
+        for new_text in style_model.stream_chat(style_messages, system="你是一个语言改写助手，将这段语句转换为扮演人物的说话语气。"):
             print(new_text, end="", flush=True)
             style_response += new_text
         print("\n"+"="*20)
@@ -322,3 +345,205 @@ def run_cot() -> None:
 
         print("Final Output: ", style_response)
         print("History has been removed.\n")
+
+
+# 定义每个任务的system以及instruction prompt
+def get_score_prompt(question: str) -> str:
+    return f"""按照下面的规则为问题进行难度打分（越高越难）：
+1. 涉及人物：问题包含了几个人物（0：不涉及人物，1:仅涉及扮演角色，2:涉及2个角色，3：涉及3个及以上的角色）
+2. 涉及时间：问题涉及了多么精确的时间（0:不涉及时间，1:涉及大范围时间（年代），2:涉及年份，3:涉及具体事件，4：涉及具体对话上下文）
+3. 问题相关性：问题和扮演角色有多么相关（0：不需要了解扮演角色即可回答，1：需要结合角色身份回答，2：需要结合角色性格回答，3：需要结合角色具体事件回答）
+回答格式为[score] <分数>，例如：[score] (2+4+3) <9>。注意：分数范围是0-10分，0分表示问题不涉及角色扮演，10分表示问题非常复杂。
+示例：
+[score] (2+4+3) <9>
+
+你需要打分的问题是：
+{question}
+"""
+
+def get_search_prompt(question: str) -> str:
+    return f"""将下面的问题重写为适合检索的问题，注意：
+1. 将问题中的任何代词都改成明确的名称，2. 不要包含任何角色扮演的提示，3. 不要包含任何上下文信息，4. 不要包含任何多余的分析和解释。
+回答格式为[search] <问题>
+示例：[search] <刘星喜欢什么>。
+
+你需要重写的问题是：
+{question}
+"""
+    
+
+def get_answer_prompt(role: str, profile: str, question: str, observation: str) -> str:
+    return f"""根据下面的角色扮演信息，判断信息是否足够回答问题，如果信息不足，需要给出用于解决问题的辅助子问题，子问题需要非常简单，专注于关键信息。
+如果信息足以回答，则输出:
+[answer] <回答内容>
+如果信息不足以回答，则输出：
+[subquery] <字问题1> <子问题2>
+你应该更多地认为问题能够被解答，除非确实缺少关键信息。注意只需要给出答案，不需要任何解释和分析。
+你需要扮演的角色是：
+{role}
+你需要扮演的角色的信息：
+{profile}
+你需要回答的问题是：
+{question}
+可能的参考信息：
+{observation}
+"""
+
+
+def get_final_answer_prompt(role: str, profile: str, question: str, observation: str) -> str:
+    return f"""根据下面的角色扮演信息，回答问题。注意只需要给出答案，不需要任何解释和分析。
+你需要扮演的角色是：
+{role}
+你需要扮演的角色的信息：
+{profile}
+你需要回答的问题是：
+{question}
+可能的参考信息：
+{observation}
+
+输出格式：
+[answer] <回答内容>
+"""
+
+
+def get_style_prompt(role: str, sentence: str) -> str:
+    return f"""你需要将下面的句子转写成对应角色的口吻，注意只需要给出答案，不需要任何解释和分析。
+你需要扮演的角色是：
+{role}
+你需要转写的句子是：
+{sentence}
+"""
+    
+# modified feice Apr 24, 2025 at 21:24
+def run_rag() -> None:
+    def run_score(model: ChatModel, question: str) -> int:
+        """运行 Score 阶段，返回分数"""
+        torch_gc()  # 清理显存
+        score_prompt = get_score_prompt(question)
+        score_messages = [{"role": "user", "content": score_prompt}]
+        print("\nScore Prompt:\n", score_prompt)
+        score_response = ""
+        for new_text in model.stream_chat(score_messages, system="你是一个人工智能打分助手，按照规则为下面的角色扮演相关问题进行难度打分"):
+            print(new_text, end="", flush=True)
+            score_response += new_text
+        print("\n" + "=" * 20)
+
+        # 解析分数
+        try:
+            score = int(score_response.split("<")[-1].split(">")[0])
+        except ValueError:
+            print("Score parsing failed, defaulting to 10.")
+            score = 10
+        return score
+    
+    def run_search(model: ChatModel, question: str, observation: str) -> str:
+        """运行 Search 阶段，返回更新后的 observation"""
+        torch_gc()  # 清理显存
+        search_prompt = get_search_prompt(question)
+        search_messages = [{"role": "user", "content": search_prompt}]
+        print("\nSearch Prompt:\n", search_prompt)
+        search_response = ""
+        for new_text in model.stream_chat(search_messages, system="你是一个人工智能问题重写助手，按照规则将下面的问题进行重写"):
+            print(new_text, end="", flush=True)
+            search_response += new_text
+        print("\n" + "=" * 20)
+
+        # 调用 Google Search API
+        search_query = search_response.split("<")[-1].split(">")[0]
+        search_result, _ = google_search(search_query)
+        observation += f"\n{search_query}: {search_result}"
+        return observation
+
+    def run_answer(model: ChatModel, role: str, profile: str, question: str, observation: str, search_count: int, max_search_count: int) -> tuple[Optional[str], Optional[list[str]]]:
+        """运行 Answer 阶段，返回答案或子问题"""
+        torch_gc()  # 清理显存
+        answer_prompt = get_final_answer_prompt(role, profile, question, observation) if search_count > max_search_count else get_answer_prompt(role, profile, question, observation)
+        answer_messages = [{"role": "user", "content": answer_prompt}]
+        print("\nAnswer Prompt:\n", answer_prompt)
+        answer_response = ""
+        for new_text in model.stream_chat(answer_messages, system="你是一个角色扮演专家，请根据下面的角色扮演信息回答问题"):
+            print(new_text, end="", flush=True)
+            answer_response += new_text
+        print("\n" + "=" * 20)
+
+        # 判断是否回答出问题
+        if "[answer]" in answer_response:
+            answer = answer_response.split("[answer]")[-1].strip()
+            return answer, None
+        elif "[subquery]" in answer_response:
+            subqueries = answer_response.split("[subquery]")[-1].strip().split("<")[1:]
+            subqueries = [q.split(">")[0] for q in subqueries]
+            return None, subqueries
+        else:
+            return None, None
+
+    def run_style(model: ChatModel, role: str, answer: str) -> str:
+        """运行 Style 阶段，返回风格化后的答案"""
+        torch_gc()  # 清理显存
+        style_prompt = get_style_prompt(role, answer)
+        style_messages = [{"role": "user", "content": style_prompt}]
+        print("\nStyle Prompt:\n", style_prompt)
+        style_response = ""
+        for new_text in model.stream_chat(style_messages, system="你是一个角色扮演专家，你需要将下面的句子转写成对应角色的口吻"):
+            print(new_text, end="", flush=True)
+            style_response += new_text
+        print("\n" + "=" * 20)
+        return style_response
+
+    if os.name != "nt":
+        try:
+            import readline  # noqa: F401
+        except ImportError:
+            print("Install `readline` for a better experience.")
+
+    # 初始化模型
+    print("正在加载模型...")
+    rag_model = ChatModel({
+        "model_name_or_path": "/data/hfc/checkpoints/GLM-4-9B-0414",
+        "template": "glm4"
+    })
+    print("模型加载完成！")
+
+    # 定义问题列表
+    questions = [
+        "你喜欢玩原神吗？",
+        "你为什么这么笨"
+    ]
+    role = "刘星"
+    profile = "刘星是一个聪明、机智、幽默的男孩，喜欢捣蛋和恶作剧。他的父母是刘梅和夏东海，他们对他的行为感到无奈，但也很宠爱他。"
+
+    for question in questions:
+        print(f"\nUser: {question}")
+
+        # 初始化变量
+        observation = ""
+        search_count = 0
+        max_search_count = 3
+        final_answer = None
+
+        # 阶段 1：Score
+        score = run_score(rag_model, question)
+
+        # 循环处理，直到回答出问题或达到最大搜索次数
+        while not final_answer and search_count <= max_search_count:
+            if score >= 4:
+                # 阶段 2：Search
+                search_count += 1
+                observation = run_search(rag_model, question, observation)
+            # 阶段 3：Answer
+            answer, subqueries = run_answer(rag_model, role, profile, question, observation, search_count, max_search_count)
+            if answer:
+                final_answer = run_style(rag_model, role, answer)
+            elif subqueries:
+                question = " ".join(subqueries)
+            else:
+                print("Answer parsing failed, exiting loop.")
+                break
+
+        # 打印最终结果
+        if final_answer:
+            print("\nFinal Output: ", final_answer)
+        else:
+            print("Failed to answer the question within the search limit.")
+
+
