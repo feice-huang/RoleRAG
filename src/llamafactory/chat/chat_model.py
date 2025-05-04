@@ -18,9 +18,16 @@
 # modified feice Apr 23, 2025 at 14:12
 将run_cot的第一步recall更换成网络搜索（Google Custom Search API），在函数内部设置代理以防止被墙。
 
+# modified feice Apr 27, 2025 at 10:51
+加入本地知识库的retrieve功能
+
+# modified feice Apr 28, 2025 at 10:34
+实现大规模处理
+
 """
 import asyncio
 import os
+import json
 from collections.abc import AsyncGenerator, Generator
 from threading import Thread
 from typing import TYPE_CHECKING, Any, Optional
@@ -31,6 +38,7 @@ from ..hparams import get_infer_args
 from .hf_engine import HuggingfaceEngine
 from .sglang_engine import SGLangEngine
 from .vllm_engine import VllmEngine
+from ..retrieve import Retriever
 
 
 if TYPE_CHECKING:
@@ -256,7 +264,7 @@ def get_recall_prompt(question: str) -> str:
 """
 
 def get_cot_prompt(question: str, observation: str) -> str:
-    return f"""你正在扮演刘星，请以刘星的身份回答问题
+    return f"""你正在扮演刘星，请以刘星的身份回答问题，注意不要虚构事实，如果是不知道的事情，需要表现出疑惑。
 问题：
 {question}
 可能的参考信息：
@@ -288,16 +296,41 @@ def run_cot() -> None:
         "template": "glm4"
     })
     style_model = ChatModel({
-        "model_name_or_path": "/data/hfc/checkpoints/Llama-3.1-8B-Instruct",
-        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_style/llama3_8b_sft_lora/TorchTrainer_9fdfa_00000_0_2025-04-16_18-36-15/checkpoint_000000/checkpoint",
-        "template": "llama3"
+        "model_name_or_path": "/data/hfc/checkpoints/GLM-4-9B-0414",
+        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_glm4_style/glm4_8b_sft_lora/TorchTrainer_436ee_00000_0_2025-04-29_10-32-58/checkpoint_000001/checkpoint",
+        "template": "glm4"
     })
     print("模型加载完成！")
+
+    # 初始化
+    retriever = Retriever(config={
+        "embedding_model": "/data/hfc/checkpoints/text2vec-large-chinese"
+    })
+
+    role = "刘星"
+    world = "家有儿女"
+
+    file_paths = [
+        f"/data/hfc/RoleRAG/mydata/input/wiki/wiki_{role}.txt",
+        f"/data/hfc/RoleRAG/mydata/input/wiki/wiki_{world}.txt"
+        # "/data/hfc/datasets/RoleAgentBench/家有儿女 S1E1/profiles/刘星.jsonl"
+    ]
+
+    docs = retriever.load_files(file_paths)
+    retriever.create_vector_store(docs)
+
+    # 保存
+    retriever.save_vector_store(f"/data/hfc/faiss_store/{world}_{role}")
 
     # 定义问题列表
     questions = [
         "你如何看待人工智能？",
-        "你为什么喜欢捣蛋？"
+        "你为什么喜欢捣蛋？",
+        "你喜欢玩原神吗？",
+        "你知道刘梅的生日吗？",
+        "你喜欢刘梅吗？",
+        "你喜欢刘星吗？",
+        "你还记得加利福尼亚的大蜘蛛吗？"
     ]
 
     for question in questions:
@@ -306,18 +339,21 @@ def run_cot() -> None:
         # 阶段 1：Recall 模型
         print("recall instruction: ", get_recall_prompt(question))
         recall_messages = [{"role": "user", "content": get_recall_prompt(question)}]
-        print("Recall Assistant: ", end="", flush=True)
+        print("Rewrite Assistant: ", end="", flush=True)
         observation = ""
         for new_text in rewrite_model.stream_chat(recall_messages, system="你是一个人工智能问题重写助手，按照规则重写问题"):
             print(new_text, end="", flush=True)
             observation += new_text
         print("\n"+"="*20)
         torch_gc()  # 清理显存
-        ans, _ = google_search(observation)
-        observation = observation + "\n" + ans
-        # observation = "刘星，刘梅之子。初中生（在第四部升上高中生），成绩（尤其化学）常令刘梅头痛。身材看似“瘦弱”，体育倒很不错。爱好广泛但大多都只折腾一时。一家的活宝，大多数麻烦的制造者。为人仗义，脑子里经常有些新奇的想法，里面有好主意也有馊主意。"
+        retrieved_docs = retriever.retrieve_top_k(question, k=2, with_context=False)
 
-
+        for i, doc in enumerate(retrieved_docs, 1):
+            print(f"=== 第 {i} 条检索结果 ===")
+            print(f"元数据: {doc.metadata}")
+            print()
+            # 合并检索到的文本
+            observation += "\n" + doc.page_content
 
         # 阶段 2：CoT 模型
         print("cot instruction: ", get_cot_prompt(question, observation))
@@ -348,36 +384,18 @@ def run_cot() -> None:
 
 
 # 定义每个任务的system以及instruction prompt
-def get_score_prompt(question: str) -> str:
-    return f"""按照下面的规则为问题进行难度打分（越高越难）：
-1. 涉及人物：问题包含了几个人物（0：不涉及人物，1:仅涉及扮演角色，2:涉及2个角色，3：涉及3个及以上的角色）
-2. 涉及时间：问题涉及了多么精确的时间（0:不涉及时间，1:涉及大范围时间（年代），2:涉及年份，3:涉及具体事件，4：涉及具体对话上下文）
-3. 问题相关性：问题和扮演角色有多么相关（0：不需要了解扮演角色即可回答，1：需要结合角色身份回答，2：需要结合角色性格回答，3：需要结合角色具体事件回答）
-回答格式为[score] <分数>，例如：[score] (2+4+3) <9>。注意：分数范围是0-10分，0分表示问题不涉及角色扮演，10分表示问题非常复杂。
-示例：
-[score] (2+4+3) <9>
-
-你需要打分的问题是：
-{question}
-"""
-
-def get_search_prompt(question: str) -> str:
-    return f"""将下面的问题重写为适合检索的问题，注意：
-1. 将问题中的任何代词都改成明确的名称，2. 不要包含任何角色扮演的提示，3. 不要包含任何上下文信息，4. 不要包含任何多余的分析和解释。
-回答格式为[search] <问题>
-示例：[search] <刘星喜欢什么>。
-
-你需要重写的问题是：
-{question}
-"""
-    
-
-def get_answer_prompt(role: str, profile: str, question: str, observation: str) -> str:
-    return f"""根据下面的角色扮演信息，判断信息是否足够回答问题，如果信息不足，需要给出用于解决问题的辅助子问题，子问题需要非常简单，专注于关键信息。
+def get_rag_prompt(role: str, profile: str, question: str, observation: str) -> str:
+    """
+    生成用于 RAG（检索增强生成）的提示（prompt）
+    :param observation: 当前的上下文
+    :param question: 用户提问的问题
+    :return: 返回生成的提示文本
+    """
+    return f"""据下面的角色扮演信息，判断信息是否足够回答问题，如果信息不足，需要给出用于解决问题的辅助问题，辅助问题需要非常简单，专注于关键信息。
 如果信息足以回答，则输出:
-[answer] <回答内容>
+[Answer] <回答内容>
 如果信息不足以回答，则输出：
-[subquery] <字问题1> <子问题2>
+[Retrieve] <辅助问题> 
 你应该更多地认为问题能够被解答，除非确实缺少关键信息。注意只需要给出答案，不需要任何解释和分析。
 你需要扮演的角色是：
 {role}
@@ -402,7 +420,7 @@ def get_final_answer_prompt(role: str, profile: str, question: str, observation:
 {observation}
 
 输出格式：
-[answer] <回答内容>
+[Answer] <回答内容>
 """
 
 
@@ -412,89 +430,23 @@ def get_style_prompt(role: str, sentence: str) -> str:
 {role}
 你需要转写的句子是：
 {sentence}
+
+输出格式：
+[Style] <回答内容>
 """
     
 # modified feice Apr 24, 2025 at 21:24
 def run_rag() -> None:
-    def run_score(model: ChatModel, question: str) -> int:
-        """运行 Score 阶段，返回分数"""
-        torch_gc()  # 清理显存
-        score_prompt = get_score_prompt(question)
-        score_messages = [{"role": "user", "content": score_prompt}]
-        print("\nScore Prompt:\n", score_prompt)
-        score_response = ""
-        for new_text in model.stream_chat(score_messages, system="你是一个人工智能打分助手，按照规则为下面的角色扮演相关问题进行难度打分"):
-            print(new_text, end="", flush=True)
-            score_response += new_text
-        print("\n" + "=" * 20)
-
-        # 解析分数
-        try:
-            score = int(score_response.split("<")[-1].split(">")[0])
-        except ValueError:
-            print("Score parsing failed, defaulting to 10.")
-            score = 10
-        return score
-    
-    def run_search(model: ChatModel, question: str, observation: str) -> str:
-        """运行 Search 阶段，返回更新后的 observation"""
-        torch_gc()  # 清理显存
-        search_prompt = get_search_prompt(question)
-        search_messages = [{"role": "user", "content": search_prompt}]
-        print("\nSearch Prompt:\n", search_prompt)
-        search_response = ""
-        for new_text in model.stream_chat(search_messages, system="你是一个人工智能问题重写助手，按照规则将下面的问题进行重写"):
-            print(new_text, end="", flush=True)
-            search_response += new_text
-        print("\n" + "=" * 20)
-
-        # 调用 Google Search API
-        search_query = search_response.split("<")[-1].split(">")[0]
-        search_result, _ = google_search(search_query)
-        observation += f"\n{search_query}: {search_result}"
-        return observation
-
-    def run_answer(model: ChatModel, role: str, profile: str, question: str, observation: str, search_count: int, max_search_count: int) -> tuple[Optional[str], Optional[list[str]]]:
-        """运行 Answer 阶段，返回答案或子问题"""
-        torch_gc()  # 清理显存
-        answer_prompt = get_final_answer_prompt(role, profile, question, observation) if search_count > max_search_count else get_answer_prompt(role, profile, question, observation)
-        answer_messages = [{"role": "user", "content": answer_prompt}]
-        print("\nAnswer Prompt:\n", answer_prompt)
-        answer_response = ""
-        for new_text in model.stream_chat(answer_messages, system="你是一个角色扮演专家，请根据下面的角色扮演信息回答问题"):
-            print(new_text, end="", flush=True)
-            answer_response += new_text
-        print("\n" + "=" * 20)
-
-        # 判断是否回答出问题
-        if "[answer]" in answer_response:
-            answer = answer_response.split("[answer]")[-1].strip()
-            return answer, None
-        elif "[subquery]" in answer_response:
-            subqueries = answer_response.split("[subquery]")[-1].strip().split("<")[1:]
-            subqueries = [q.split(">")[0] for q in subqueries]
-            return None, subqueries
-        else:
-            return None, None
-
-    def run_style(model: ChatModel, role: str, answer: str) -> str:
-        """运行 Style 阶段，返回风格化后的答案"""
-        torch_gc()  # 清理显存
-        style_prompt = get_style_prompt(role, answer)
-        style_messages = [{"role": "user", "content": style_prompt}]
-        print("\nStyle Prompt:\n", style_prompt)
-        style_response = ""
-        for new_text in model.stream_chat(style_messages, system="你是一个角色扮演专家，你需要将下面的句子转写成对应角色的口吻"):
-            print(new_text, end="", flush=True)
-            style_response += new_text
-        print("\n" + "=" * 20)
-        return style_response
-
     if os.name != "nt":
         try:
             import readline  # noqa: F401
         except ImportError:
             print("Install `readline` for a better experience.")
+
+    # 设置角色与世界
+    role = "刘星"
+    world = "家有儿女"
+    profile = "刘星，刘梅之子。初中生（在第四部升上高中生），成绩（尤其化学）常令刘梅头痛。身材看似“瘦弱”，体育倒很不错。爱好广泛但大多都只折腾一时。一家的活宝，大多数麻烦的制造者。为人仗义，脑子里经常有些新奇的想法，里面有好主意也有馊主意。"
 
     # 初始化模型
     print("正在加载模型...")
@@ -502,48 +454,107 @@ def run_rag() -> None:
         "model_name_or_path": "/data/hfc/checkpoints/GLM-4-9B-0414",
         "template": "glm4"
     })
+    
     print("模型加载完成！")
+
+    # 初始化检索器
+    retriever = Retriever(config={
+        "embedding_model": "/data/hfc/checkpoints/text2vec-large-chinese"
+    })
+
+    # 加载文件路径
+    file_paths = [
+        "/data/hfc/RoleRAG/mydata/input/wiki/wiki_刘星.txt",
+        "/data/hfc/RoleRAG/mydata/input/wiki/wiki_家有儿女.txt",
+        "/data/hfc/datasets/RoleAgentBench/家有儿女 S1E1/profiles/刘星.jsonl"
+    ]
+
+    # 加载文件并创建向量数据库
+    docs = retriever.load_files(file_paths)
+    retriever.create_vector_store(docs)
+
+    # 保存向量数据库
+    retriever.save_vector_store(f"/data/hfc/faiss_store/{world}_{role}_rag")
 
     # 定义问题列表
     questions = [
+        "你如何看待人工智能？",
+        "你为什么喜欢捣蛋？",
         "你喜欢玩原神吗？",
-        "你为什么这么笨"
+        "你知道刘梅的生日吗？",
+        "你喜欢刘梅吗？",
+        "你喜欢刘星吗？",
+        "你还记得加利福尼亚的大蜘蛛吗？"
     ]
-    role = "刘星"
-    profile = "刘星是一个聪明、机智、幽默的男孩，喜欢捣蛋和恶作剧。他的父母是刘梅和夏东海，他们对他的行为感到无奈，但也很宠爱他。"
 
+    # 初始化观察状态为空
+    observation = ""
+
+    # 循环处理每个问题
     for question in questions:
-        print(f"\nUser: {question}")
+        print(f"\n问题：{question}")
+        
+        # 生成 RAG 提示并传递给模型
+        messages = [{"role": "user", "content": get_rag_prompt(role, profile, question, observation)}]
+        model_response = ""
+        
+        max_attempts = 5  # 最大尝试次数
+        attempts = 0
+        while attempts < max_attempts:
+            attempts += 1
+            # 使用流式输出调用模型
+            for new_response in rag_model.stream_chat(messages):
+                print(new_response, end="", flush=True)
+                model_response += new_response
+            print("\n" + "*"*20)
+            print(model_response)
+            
+            # 去除开头的"\n"和" "
+            model_response = model_response.lstrip("\n").lstrip(" ")
 
-        # 初始化变量
-        observation = ""
-        search_count = 0
-        max_search_count = 3
-        final_answer = None
-
-        # 阶段 1：Score
-        score = run_score(rag_model, question)
-
-        # 循环处理，直到回答出问题或达到最大搜索次数
-        while not final_answer and search_count <= max_search_count:
-            if score >= 4:
-                # 阶段 2：Search
-                search_count += 1
-                observation = run_search(rag_model, question, observation)
-            # 阶段 3：Answer
-            answer, subqueries = run_answer(rag_model, role, profile, question, observation, search_count, max_search_count)
-            if answer:
-                final_answer = run_style(rag_model, role, answer)
-            elif subqueries:
-                question = " ".join(subqueries)
+            if model_response.startswith("[Retrieve]"):
+                # 调用检索器进行检索
+                print("开始检索...")
+                retrieved_docs = retriever.retrieve_top_k(question, k=3, with_context=False)
+                
+                # 将检索到的文档加入观察状态
+                retrieval_text = "\n".join([doc.page_content for doc in retrieved_docs])
+                observation += retrieval_text  # 更新观察状态
+                
+                print("检索结果已加入观察状态.")
+                print(f"检索结果：\n{retrieval_text}")
+            elif model_response.startswith("[Answer]"):
+                # 如果模型返回了答案，跳出循环
+                print("模型返回答案，停止进一步请求。")
+                break  # 跳出循环
             else:
-                print("Answer parsing failed, exiting loop.")
-                break
+                print("无效的模型响应，无法处理。")
+        
+        if model_response.startswith("[Answer]"):
+            # 解析模型的回答
+            answer = model_response[len("[Answer]"):].strip()
+            print(f"模型回答：{answer}")
 
-        # 打印最终结果
-        if final_answer:
-            print("\nFinal Output: ", final_answer)
+            # 通过风格调整 prompt 进行风格化
+            style_prompt = get_style_prompt(role, answer)
+            style_response = ""
+            for new_response in rag_model.stream_chat({"role": "user", "content": style_prompt}):
+                print(new_response, end="", flush=True)
+                style_response += new_response
+            
+            style_answer = style_response[len("[Style]"):].strip()
+
+            print(f"风格化回答：{style_answer}")
+            observation = ""  # 清空观察状态
+            torch_gc()  # 清理显存
         else:
-            print("Failed to answer the question within the search limit.")
-
-
+            # 如果达到最大尝试次数且没有返回有效答案，调用最终回答提示
+            print(f"模型未能生成有效的答案，调用最终回答生成。")
+            final_answer_prompt = get_final_answer_prompt(role, profile, question, observation)
+            final_answer = ""
+            for new_response in rag_model.stream_chat([{"role": "user", "content": final_answer_prompt}]):
+                print(new_response, end="", flush=True)
+                final_answer += new_response
+            print(f"\n最终回答：{final_answer}")
+            observation = ""  # 清空观察状态
+            torch_gc()  # 清理显存

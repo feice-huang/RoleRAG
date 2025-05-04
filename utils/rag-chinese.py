@@ -1,11 +1,16 @@
 """
-2025-04-17 14:42:58 Thursday
-在v4的基础上：
-1. 优化了mydata的文件夹架构，将input和process单独放在文件夹，防止混淆
-2. 简化CoT的步骤，使其能配合论文写作，仅取必要部分。
-
-2025-04-28 10:10:44 Monday
-修改了数据集的instruction，input（清空instruction，input与推理保持同样形式）
+# modified feice Apr 28, 2025 at 16:40
+1. 用于生成RAG需要的SFT数据，数据格式与SmartRAG类似
+    a. Answer Directly: [Answer] xxx
+    b. Retrieve(Rewrite): [Retrieve] xxx
+    c. Answer with Observations: [Answer] xxx
+2. 先去看看SmartRAG有没有开源数据，能不能抄进来
+    a. 很遗憾，没有开源数据集构建的步骤
+    b. 他这个数据集也太大了，JSON 数组中共有 105864 条数据，人工真能删的过来吗
+3. 重新想一下这个方法，优势在于能够在对话历史中做检索，能够增强记忆。
+3. 总之先大规模生成吧，问题沿用CoT的
+    a. 考虑直接从deepseek中蒸馏能力，比如问题重写，可以直接让deepseek按要求生成
+    b. 可以，那所有的能力全都从deepseek中蒸馏出来
 """
 
 import glob
@@ -41,6 +46,9 @@ OUTPUT_PATH_STYLE = f"{PROCESS_PATH_BASE}/style" # 一个输出文件，style
 
 # 改到v3后新增的输出
 OUTPUT_PATH_RECALL = f"{PROCESS_PATH_BASE}/recall" # 一个中间文件，recall
+
+# 改到RAG后新增的输出
+OUTPUT_PATH_RAG = f"{PROCESS_PATH_BASE}/rag" # 一个中间文件，rag
 
 
 def call_tsinghua_deepseek(model, token, messages, max_retries=5, base_delay=1, max_delay=16):
@@ -202,7 +210,7 @@ def convert_to_conversation_full(role, chosen_path, full_path, model_engine, tok
 
     chosen_data = load_conversation(chosen_path)
     full_data = []
-    broken_styles = ["书面语", "翻译腔", "过度情绪化"]
+    broken_styles = ["书面语", "古文", "翻译腔", "过度情绪化", "异性口吻"]
 
     for item in tqdm(chosen_data, desc="Generating full conversations"):
         broken_style = random.choice(broken_styles)
@@ -538,8 +546,8 @@ def fill_in_relevant_query_world_template(world, statement):
 提供2个多样且简洁的可能问题。严格遵循示例中的格式，不需要多余分析，避免诸如"以下是答案："之类的陈述。
 示例输出格式：
 
-- 《{world}》中是否存在……
-- 《{world}》的人物a和人物b之间的关系是……？
+- 《{world}》中存在某件事
+- 《{world}》的人物a和人物b之间的关系是
 '''
 
 def fill_in_relevant_query_world_instruction_template(world):
@@ -548,9 +556,9 @@ def fill_in_relevant_query_world_instruction_template(world):
 按问题涉及的信息不同，提供数个多样且简洁的可能信息。严格遵循示例中的格式，不需要多余分析，避免诸如"以下是答案："之类的陈述。
 示例输出格式：
 
-- 《{world}》是……吗？
-- 《{world}》中是否存在……
-- 《{world}》的人物a和人物b之间的关系是……？
+- 《{world}》是xxx
+- 《{world}》中是否存在某件事
+- 《{world}》的人物a和人物b之间的关系是xxx
 '''
 
 
@@ -1115,6 +1123,179 @@ def shuffle_and_save_world(roles, world):
 
     print(f"Saved shuffled data to {output_file}")
 
+
+def fill_in_rag_template(world, role, general, input, chosen):
+    """
+    用于让deepseek生成RAG数据的prompt
+    """
+    return f"""按照下列规则，为我生成用于角色扮演的数据集：
+跟据下面的角色扮演问答，比照问题和答案，判断给定的[已知]信息是否足够正确回答问题。
+1. 如果[已知]的信息不能够推导出问题的答案，则需要给出用于解决问题的辅助问题。这个辅助问题需要非常简单，将指示代词替换为实际名称以避免歧义，专注于问出缺失的关键信息。
+输出格式：
+[Retrieve] 辅助问题1
+[Retrieve] 辅助问题2（可选）
+2. 如果[已知]的信息足以回答，则以扮演角色的口吻给出回答。输出:
+[Answer] 回答内容
+
+你应该更多地认为问题能够被解答，除非确实缺少关键信息。注意只需要给出答案，不需要任何解释和分析。
+
+[已知] 你需要扮演的角色是：
+{world}中的{role}
+[已知] 你需要扮演的角色的信息：
+{general}
+[已知] 你需要回答的问题是：
+{input}
+---
+[未知] 问题的答案是:
+{chosen}
+"""
+
+def rag_history_input_1():
+    """
+    rag的history的input
+    """
+    return f"""按照下列规则，为我生成用于角色扮演的数据集：
+跟据下面的角色扮演问答，比照问题和答案，判断给定的[已知]信息是否足够正确回答问题。
+1. 如果[已知]的信息不能够推导出问题的答案，则需要给出用于解决问题的辅助问题。这个辅助问题需要非常简单，将指示代词替换为实际名称以避免歧义，专注于问出缺失的关键信息。
+输出格式：
+[Retrieve] 辅助问题1
+[Retrieve] 辅助问题2（可选）
+2. 如果[已知]的信息足以回答，则以扮演角色的口吻给出回答。输出:
+[Answer] 回答内容
+
+你应该更多地认为问题能够被解答，除非确实缺少关键信息。注意只需要给出答案，不需要任何解释和分析。
+
+[已知] 你需要扮演的角色是：
+家有儿女中的刘星
+[已知] 你需要扮演的角色的信息：
+刘星，刘梅之子。初中生（在第四部升上高中生），成绩（尤其化学）常令刘梅头痛。身材看似“瘦弱”，体育倒很不错。爱好广泛但大多都只折腾一时。一家的活宝，大多数麻烦的制造者。为人仗义，脑子里经常有些新奇的想法，里面有好主意也有馊主意。
+[已知] 你需要回答的问题是：
+你对弟弟有什么看法？
+---
+问题的答案是:
+夏雨这个弟弟有时候真让人头疼，他总是模仿我，搞得家里鸡飞狗跳的。不过他也有可爱的时候，毕竟他是我弟弟嘛。至于制造麻烦，我承认我有时候确实会搞出些乱子，但我也不是故意的，只是有时候想法太新奇了，结果弄砸了。升上高中后，我觉得自己成熟了不少，虽然还是会捣乱，但不会再像以前那样胡来了，至少现在我学会了怎么在捣乱的同时不惹太大的麻烦。
+"""
+
+def rag_history_output_1():
+    """
+    rag的history的output
+    """
+    return f"""[Retrieve] 刘星和刘星的弟弟是什么关系
+"""
+
+def rag_history_input_2():
+    """
+    rag的history的input
+    """
+    return f"""按照下列规则，为我生成用于角色扮演的数据集：
+跟据下面的角色扮演问答，比照问题和答案，判断给定的[已知]信息是否足够正确回答问题。
+1. 如果[已知]的信息不能够推导出问题的答案，则需要给出用于解决问题的辅助问题。这个辅助问题需要非常简单，将指示代词替换为实际名称以避免歧义，专注于问出缺失的关键信息。
+输出格式：
+[Retrieve] 辅助问题1
+[Retrieve] 辅助问题2（可选）
+2. 如果[已知]的信息足以回答，则以扮演角色的口吻给出回答。输出:
+[Answer] 回答内容
+
+你应该更多地认为问题能够被解答，除非确实缺少关键信息。注意只需要给出答案，不需要任何解释和分析。
+
+[已知] 你需要扮演的角色是：
+家有儿女中的刘星
+[已知] 你需要扮演的角色的信息：
+刘星，刘梅之子。初中生（在第四部升上高中生），成绩（尤其化学）常令刘梅头痛。身材看似“瘦弱”，体育倒很不错。爱好广泛但大多都只折腾一时。一家的活宝，大多数麻烦的制造者。为人仗义，脑子里经常有些新奇的想法，里面有好主意也有馊主意。
+[已知] 你需要回答的问题是：
+你在家里扮演什么角色？
+---
+问题的答案是:
+我是刘梅的儿子，刚升上高中生。
+"""
+
+def rag_history_output_2():
+    """
+    rag的history的output
+    """
+    return f"""[Answer] 我是刘梅的儿子，刚升上高中生。
+"""
+
+def get_rag_prompt(world: str, role: str, profile: str, question: str, observation: str) -> str:
+    """
+    生成用于 RAG（检索增强生成）的提示（prompt）
+    :param observation: 当前的上下文
+    :param question: 用户提问的问题
+    :return: 返回生成的提示文本
+    """
+    return f"""跟据下面的角色扮演问答，判断给定的信息是否足够正确回答问题。
+1. 如果信息不足，需要给出用于解决问题的辅助问题。这个辅助问题需要非常简单，将指示代词替换为实际名称以避免歧义，专注于问出缺失的关键信息。
+输出格式：
+[Retrieve] 辅助问题1
+[Retrieve] 辅助问题2（可选）
+2. 如果信息足以回答，则以扮演角色的口吻给出回答。输出:
+[Answer] 回答内容
+你应该更多地认为问题能够被解答，除非确实缺少关键信息。注意只需要给出答案，不需要任何解释和分析。
+你需要扮演的角色是：
+{world}中的{role}
+你需要扮演的角色的信息：
+{profile}
+你需要回答的问题是：
+{question}
+可能的参考信息：
+{observation}
+"""
+
+
+def generate_rag(world, role, model_engine, token):
+    """
+    从访谈类问答数据，生成RAG数据
+    """
+    general_path = f"{GENERAL_PATH}/general_{role}.txt"
+    dpo_path = f"{OUTPUT_PATH_DPO}/{role}_generated_qa.jsonl"
+    rag_path = f"{OUTPUT_PATH_RAG}/{role}_rag.jsonl"
+
+    # 检查文件是否存在
+    if os.path.exists(rag_path):
+        print(f"{rag_path} 已存在，跳过生成步骤。")
+        return
+
+    # 创建目标目录
+    os.makedirs(os.path.dirname(rag_path), exist_ok=True)
+
+    with open(general_path, 'r', encoding='utf-8') as f:
+        general = f.read().strip()
+
+    # 读取 DPO 数据
+    dpo_data = load_conversation(dpo_path)
+    rag_data = []
+
+    for item in tqdm(dpo_data, desc="Generating RAG"):
+        # 构造新的 JSON 数据
+        # 构造 DeepSeek 消息
+        rag_prompt = fill_in_rag_template(world, role, general, item["input"], item["chosen"])
+        messages = [
+            {"role": "system", "content": "你是一个角色扮演专家，现在需要辅助我生成角色扮演数据集。"},
+            {"role": "user", "content": rag_history_input_1()},
+            {"role": "assistant", "content": rag_history_output_1()},
+            {"role": "user", "content": rag_history_input_2()},
+            {"role": "assistant", "content": rag_history_output_2()},
+            {"role": "user", "content": rag_prompt}
+        ]
+
+        # 调用 DeepSeek 模型生成思考过程
+        _, generated_rag = call_tsinghua_deepseek(model_engine, token, messages)
+        print("messages:", messages)
+        print("*******************")
+        print("generated_cot:", generated_rag)
+
+        rag_data.append({
+            "system": f"你是一个角色扮演专家，判断给出的信息是否足够回答问题，若足够则给出回答，否则给出问题的重写",
+            "instruction": "",
+            "input": get_rag_prompt(world, role, general, item["input"], ""),
+            "output": generated_rag,
+            # "history": item["history"]
+        })
+
+    # 保存为 JSONL 文件
+    save_jsonl(rag_data, rag_path)
+    print(f"Saved Style Transfer data to {rag_path}")
+
 def main(world, role, model_engine, token):
     # 【对话类数据】用于Style部分
     conversation_path = f"{DATASET_PATH}/profiles/{role}.jsonl"
@@ -1151,12 +1332,18 @@ def main(world, role, model_engine, token):
     generate_anti_cot(world, role, model_engine, token) # 这里会调用 DeepSeek 模型
     # {role}_*.jsonl -> {role}_cot_shuffle.json
     shuffle_and_save(f"{OUTPUT_PATH_COT}/{role}_*.jsonl", f"{OUTPUT_PATH_BASE}/{role}_cot_shuffle.json") # 不是shuffle，而是jsonl->json
+
+    # 【访谈类数据】用于RAG部分
+    # general_{role}.txt, {role}_generated_qa.jsonl -> {role}_rag.jsonl
+    generate_rag(world, role, model_engine, token) # 这里会调用 DeepSeek 模型
+
+
     
 
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NjM2MTMzOSwiZXhwIjoxNzQ2MzgyOTM5fQ.yZJCx6vvZ6EGUAt2DTXxw2dpLjXLRI83xTgmf2fS61s"
+TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlIjoiMTAyNyIsImlhdCI6MTc0NTgyOTU2OSwiZXhwIjoxNzQ1ODUxMTY5fQ.p9pyPKBr9N1I_yai7_KK8mTk8pshlM0Ng3DaUpcHSP8"
 # 示例调用
 main("家有儿女", "刘星", "DeepSeek-R1-671B", TOKEN)
-main("家有儿女", "刘梅", "DeepSeek-R1-671B", TOKEN)
-main("家有儿女", "夏东海", "DeepSeek-R1-671B", TOKEN)
-main("家有儿女", "小雨", "DeepSeek-R1-671B", TOKEN)
-main("家有儿女", "小雪", "DeepSeek-R1-671B", TOKEN)
+main("家有儿女", "刘梅", "DeepSeek-R1-Distill-32B", TOKEN)
+main("家有儿女", "夏东海", "DeepSeek-R1-Distill-32B", TOKEN)
+main("家有儿女", "小雨", "DeepSeek-R1-Distill-32B", TOKEN)
+main("家有儿女", "小雪", "DeepSeek-R1-Distill-32B", TOKEN)
