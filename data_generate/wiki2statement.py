@@ -1,14 +1,8 @@
 """
-2025-05-05 20:14:05 Monday
-受不了了，全重写了
-新的数据集位置在mydata2，里面是input output process三个子文件夹
-数据流:
-wiki -> statement -> qa_statement(75) 
-conversations -> summary -> qa_summary(25) 写在qa_summary和qa_statement里面了
+** wiki -> statement -> qa_statement(75) 
+conversations -> summary -> qa_summary(25)
 GPT -> qa_chat(25)
 GPT -> qa_leading(75)
-
-
 """
 
 import glob
@@ -21,16 +15,10 @@ from tqdm import tqdm
 import requests
 from openai import OpenAI
 
-client = OpenAI(
-    # defaults to os.environ.get("OPENAI_API_KEY")
-    api_key="sk-uOftWQfqs2MwIAJfiwTPbqMFT8qAJqEWeWOFxC0MZVui10If",
-    base_url="https://api.chatanywhere.tech/v1"
-    # base_url="https://api.chatanywhere.org/v1"
-)
 
-WIKI_PATH = "/data/hfc/mydata/input/wiki"
-GENERAL_PATH = "/data/hfc/mydata/input/general"
-PROCESS_PATH_BASE = "/data/hfc/mydata2/process"
+WIKI_PATH = "/data/hfc/RoleRAG/data0506/input/wiki"
+GENERAL_PATH = "/data/hfc/RoleRAG/data0506/input/general"
+PROCESS_PATH_BASE = "/data/hfc/RoleRAG/data0506/process"
 OUTPUT_PATH_STATEMENT = f"{PROCESS_PATH_BASE}/statement"
 
 def fill_in_role_statement_template(character, passage, general):
@@ -66,7 +54,13 @@ def load_wiki_data(role):
     with open(wiki_file, 'r', encoding='utf-8') as f:
         return [p.strip() for p in f.read().split('\n\n') if p.strip()]
 
-def generate_role_statements(role, model_engine):
+def wiki2statement(role, apikey, model_engine="gpt-4o-mini"):
+    client = OpenAI(
+    # defaults to os.environ.get("OPENAI_API_KEY")
+    api_key=apikey,
+    base_url="https://api.chatanywhere.tech/v1"
+    # base_url="https://api.chatanywhere.org/v1"
+)
     general_path = f"{GENERAL_PATH}/general_{role}.txt"
     # 读取 general 数据, txt里面只有一行
     with open(general_path, 'r', encoding='utf-8') as f:
@@ -103,7 +97,7 @@ def generate_role_statements(role, model_engine):
 
             # 只有在有内容时才尝试提取陈述
             if generated_content != "无有效响应":
-                statements = [s.strip() for s in generated_content.split('\n') if s.startswith('- ')]
+                statements = [s.strip().replace('- ', "") for s in generated_content.split('\n') if s.startswith('- ')]
                 results.append({"passage": passage, "statements": statements})
             else:
                 print(f"警告: 段落 '{passage[:30]}...' 没有生成有效陈述，已跳过")
@@ -125,4 +119,8 @@ def generate_role_statements(role, model_engine):
     print(f"生成完成！已保存到: {statement_path}")
 
 
-generate_role_statements("刘星", "gpt-4o-mini")
+if __name__ == "__main__":
+    # 示例用法
+    apikey = "sk-MA7hKS37UdRUmP3Xz4BzHt3Rqj6QFbRoEagxcmFwwBBHyZR6"
+    # 生成角色陈述
+    wiki2statement("刘星", apikey, "gpt-4o-mini")
