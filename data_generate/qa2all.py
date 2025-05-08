@@ -14,16 +14,25 @@ def qa2all(world, role):
     :param world: 世界名称
     :param role: 角色名称
     """
-    def load_and_filter_json(file_path):
+    def load_and_filter_json(file_path, source_type):
         """
         加载 JSON 文件并提取需要的字段。
         :param file_path: JSON 文件路径
+        :param source_type: 数据来源类型
         :return: 提取后的数据列表
         """
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            # 只保留 "question", "answer", "retrieve" 字段
-            return [{"question": item.get("question"), "answer": item.get("answer"), "retrieve": item.get("retrieve", "")} for item in data]
+            # 只保留 "question", "answer", "retrieve" 字段，并加上 source_type
+            return [
+                {
+                    "question": item.get("question"),
+                    "answer": item.get("answer"),
+                    "retrieve": item.get("retrieve", ""),
+                    "source_type": source_type
+                }
+                for item in data
+            ]
     
     # 定义需要遍历的子文件夹
     subfolders = ["qa_anti", "qa_chat", "qa_statement", "qa_summary"]
@@ -39,7 +48,7 @@ def qa2all(world, role):
         pattern = os.path.join(folder_path, f"{world}_{role}_*.json")
         for file_path in glob(pattern):
             print(f"Processing file: {file_path}")
-            merged_data.extend(load_and_filter_json(file_path))
+            merged_data.extend(load_and_filter_json(file_path, subfolder))
 
     # 打乱数据
     random.shuffle(merged_data)

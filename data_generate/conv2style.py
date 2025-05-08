@@ -22,13 +22,6 @@ from tqdm import tqdm
 import requests
 from openai import OpenAI
 
-client = OpenAI(
-    # defaults to os.environ.get("OPENAI_API_KEY")
-    api_key="sk-uOftWQfqs2MwIAJfiwTPbqMFT8qAJqEWeWOFxC0MZVui10If",
-    base_url="https://api.chatanywhere.tech/v1"
-    # base_url="https://api.chatanywhere.org/v1"
-)
-
 # 输入数据的路径
 DATASET_PATH = "/data/hfc/datasets/RoleAgentBench/家有儿女 S1E1"
 WIKI_PATH = "/data/hfc/mydata/input/wiki"
@@ -145,7 +138,12 @@ def convert_to_conversation_full(role, chosen_path, full_path, model_engine):
             messages=messages,
             temperature=1.0
         )
-        rejected = response.choices[0].message.content.strip()
+        print(f"response: {response}")
+        content = response.choices[0].message.content
+        if content is None:
+            print("内容被过滤，跳过本条。")
+            continue  # 或者重试
+        rejected = content.strip()
 
         print("messages: ", messages)
         print("rejected: ", rejected.replace('- rejected: ', ''))
@@ -1112,39 +1110,22 @@ def main(world, role, model_engine, token):
     convert_to_conversation_full(role, chosen_path, full_path, model_engine) # 这里会调用 4o-mini 模型
     # {role}_conversation.jsonl -> {role}_style.jsonl
     generate_style(role)
-    # {role}_style.jsonl -> {role}_style_shuffle.json
-    shuffle_and_save(f"{OUTPUT_PATH_STYLE}/{role}_*.jsonl", f"{OUTPUT_PATH_BASE}/{role}_style_shuffle.json") # 不是shuffle，而是jsonl->json
+
     
-    # # 【访谈类数据】用于Knowledge部分
-    # # wiki_{world}.txt -> {world}_statement.json
-    # generate_world_statements(world, model_engine, token) # 这里会调用 DeepSeek 模型
-    # # {world}_statement.json -> {world}_recall.jsonl, {world}_with_query.json
-    # generate_world_queries(world, model_engine, token) # 这里会调用 DeepSeek 模型
-    # # wiki_{role}.txt, general_{role}.txt -> {role}_statement.json
-    # generate_role_statements(role, model_engine, token) # 这里会调用 DeepSeek 模型
-    # # {role}_statement.json, general_{role}.txt -> {role}_recall.jsonl, {role}_with_query.json
-    # generate_role_queries_v2(role, model_engine, token) # 这里会调用 DeepSeek 模型
-    # # {world}_recall.jsonl, {role}_recall.jsonl -> {world}_{role}_recall_shuffle.json
-    # shuffle_and_save_world([role], world) 
+model_engine = "gpt-4o"
+apikey = "sk-MA7hKS37UdRUmP3Xz4BzHt3Rqj6QFbRoEagxcmFwwBBHyZR6"
+client = OpenAI(
+    # defaults to os.environ.get("OPENAI_API_KEY")
+    api_key=apikey,
+    base_url="https://api.chatanywhere.tech/v1"
+    # base_url="https://api.chatanywhere.org/v1"
+)
+main("家有儿女", "刘星", model_engine, apikey)
 
 
-    # # 【访谈类数据】用于CoT部分
-    # # general_{role}.txt, {role}_recall.jsonl -> {role}_generated_qa.jsonl
-    # generate_answer(role, model_engine, token) # 这里会调用 DeepSeek 模型
-    # # anti_{role}.json, general_{role}.txt -> {role}_with_anti_query.json
-    # generate_role_anti_queries(world, role, model_engine, token) # 这里会调用 DeepSeek 模型
-    # # {role}_generated_qa.jsonl -> {role}_cot.jsonl
-    # generate_cot(world, role, model_engine, token) # 这里会调用 DeepSeek 模型
-    # # {role}_with_anti_query.json, general_{role}.txt -> {role}_anti_cot.jsonl
-    # generate_anti_cot(world, role, model_engine, token) # 这里会调用 DeepSeek 模型
-    # # {role}_*.jsonl -> {role}_cot_shuffle.json
-    # shuffle_and_save(f"{OUTPUT_PATH_COT}/{role}_*.jsonl", f"{OUTPUT_PATH_BASE}/{role}_cot_shuffle.json") # 不是shuffle，而是jsonl->json
-    
 
 # 示例调用
-model_engine = "gpt-4o-mini"
-token = "sk-MA7hKS37UdRUmP3Xz4BzHt3Rqj6QFbRoEagxcmFwwBBHyZR6"
-main("家有儿女", "刘星", model_engine, token)
+
 # main("家有儿女", "刘梅", model_engine)
 # main("家有儿女", "夏东海", model_engine)
 # main("家有儿女", "小雨", model_engine)

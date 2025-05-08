@@ -46,10 +46,17 @@ class Retriever:
                                 docs.append(Document(page_content=chunk, metadata={"source": file_path}))
                     else:
                         data = json.load(f)
-                        text = json.dumps(data, ensure_ascii=False)
-                        splits = self.text_splitter.split_text(text)
-                        for chunk in splits:
-                            docs.append(Document(page_content=chunk, metadata={"source": file_path}))
+                        if isinstance(data, list):
+                            for item in data:
+                                text = json.dumps(item, ensure_ascii=False)
+                                splits = self.text_splitter.split_text(text)
+                                for chunk in splits:
+                                    docs.append(Document(page_content=chunk, metadata={"source": file_path}))
+                        else:
+                            text = json.dumps(data, ensure_ascii=False)
+                            splits = self.text_splitter.split_text(text)
+                            for chunk in splits:
+                                docs.append(Document(page_content=chunk, metadata={"source": file_path}))
             else:
                 raise ValueError(f"Unsupported file type: {file_path}")
         return docs

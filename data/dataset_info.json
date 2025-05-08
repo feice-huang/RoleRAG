@@ -1,65 +1,11 @@
 {
-  "刘星_消融_sft": {
-    "file_name": "刘星_dpo_shuffle.json",
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "response": "chosen",
-      "history": "history"
-    }
-  },
   "刘星_cot":{
-    "file_name": "刘星_cot.json",
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "response": "cot", 
-      "history": "history"
-    }
-  },
-  "刘星_cot_shuffle":{
-    "file_name": "刘星_cot_shuffle.json",
+    "file_name": "家有儿女_刘星_cot_135.json",
     "columns": {
       "system": "system",
       "prompt": "instruction",
       "query": "input",
       "response": "cot"
-    }
-  },
-  "刘星_recall":{
-    "file_name": "家有儿女_刘星_recall_shuffle.json",
-    "columns": {
-      "prompt": "instruction",
-      "query": "query",
-      "response": "recall"
-    }
-  },
-  "刘星_style":{
-    "file_name": "刘星_style_shuffle.json",
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "response": "output"
-    }
-  },
-  "刘星_dpo": {
-    "file_name": "刘星_dpo_shuffle.json",
-    "ranking": true,
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "chosen": "chosen",
-      "rejected": "rejected",
-      "history": "history"
-    }
-  },
-  "刘星_sft": {
-    "file_name": "刘星_sft_shuffle.json",
-    "columns": {
-      "prompt": "instruction",
-      "query": "input",
-      "response": "output",
-      "history": "history"
     }
   }
 }

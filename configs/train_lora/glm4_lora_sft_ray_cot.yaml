@@ -10,7 +10,7 @@ lora_rank: 8
 lora_target: all
 
 ### dataset
-dataset: 刘星_cot_shuffle # ****************
+dataset: 刘星_cot # ****************
 dataset_dir: /data/hfc/RoleRAG/data  # or use local absolute path
 template: glm4
 cutoff_len: 2048
@@ -29,7 +29,7 @@ save_only_model: false
 
 ### ray
 ray_run_name: glm4_8b_sft_lora
-ray_storage_path: ./saves/刘星_glm4_cot_800
+ray_storage_path: ./saves/刘星_glm4_cot_0508
 ray_num_workers: 7  # number of GPUs to use
 resources_per_worker:
   GPU: 1

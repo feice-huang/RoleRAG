@@ -21,7 +21,7 @@
 # modified feice Apr 27, 2025 at 10:51
 加入本地知识库的retrieve功能
 
-# modified feice Apr 28, 2025 at 10:34
+# modified feice May 8, 2025 at 18:26
 实现大规模处理
 
 """
@@ -31,6 +31,7 @@ import json
 from collections.abc import AsyncGenerator, Generator
 from threading import Thread
 from typing import TYPE_CHECKING, Any, Optional
+from tqdm import tqdm 
 
 from ..extras.constants import EngineName
 from ..extras.misc import torch_gc
@@ -196,64 +197,64 @@ def run_chat() -> None:
         messages.append({"role": "assistant", "content": response})
 
 # modified feice Apr 23, 2025 at 14:11
-import requests
-import time
+# import requests
+# import time
 
-GOOGLE_API_URL = "https://www.googleapis.com/customsearch/v1"
-GOOGLE_API_KEY = "AIzaSyDO3hlUuK9CugxCIQf86czKk-_K_NeHvuA"  # 替换为你的 Google API 密钥
-GOOGLE_CX = "87b42182cc13c4b23"  # 替换为你的 Google Custom Search Engine ID
+# GOOGLE_API_URL = "https://www.googleapis.com/customsearch/v1"
+# GOOGLE_API_KEY = "AIzaSyDO3hlUuK9CugxCIQf86czKk-_K_NeHvuA"  # 替换为你的 Google API 密钥
+# GOOGLE_CX = "87b42182cc13c4b23"  # 替换为你的 Google Custom Search Engine ID
 
-def google_search(query, num_results=4, timeout=5):
-    """
-    使用 Google Custom Search JSON API 执行查询并返回结果。
+# def google_search(query, num_results=4, timeout=5):
+#     """
+#     使用 Google Custom Search JSON API 执行查询并返回结果。
 
-    :param query: 搜索的关键词或主题
-    :param num_results: 返回的搜索结果数量（默认 4）
-    :param timeout: 请求超时时间（默认 5 秒）
-    :return: 检索到的文本和搜索耗时
-    """
-    params = {
-        "q": query,
-        "key": GOOGLE_API_KEY,
-        "cx": GOOGLE_CX,
-        "num": num_results
-    }
+#     :param query: 搜索的关键词或主题
+#     :param num_results: 返回的搜索结果数量（默认 4）
+#     :param timeout: 请求超时时间（默认 5 秒）
+#     :return: 检索到的文本和搜索耗时
+#     """
+#     params = {
+#         "q": query,
+#         "key": GOOGLE_API_KEY,
+#         "cx": GOOGLE_CX,
+#         "num": num_results
+#     }
 
-    # 设置代理
-    proxies = {
-        "http": "http://219.223.184.164:7890",
-        "https": "http://219.223.184.164:7890"
-    }
+#     # 设置代理
+#     proxies = {
+#         "http": "http://219.223.184.164:7890",
+#         "https": "http://219.223.184.164:7890"
+#     }
 
-    try:
-        start_time = time.time()
-        response = requests.get(GOOGLE_API_URL, params=params, timeout=timeout, proxies=proxies)
-        response.raise_for_status()  # 如果响应状态码不是 200，抛出异常
-        search_time = time.time() - start_time
+#     try:
+#         start_time = time.time()
+#         response = requests.get(GOOGLE_API_URL, params=params, timeout=timeout, proxies=proxies)
+#         response.raise_for_status()  # 如果响应状态码不是 200，抛出异常
+#         search_time = time.time() - start_time
 
-        # 解析响应 JSON
-        response_json = response.json()
-        items = response_json.get("items", [])
+#         # 解析响应 JSON
+#         response_json = response.json()
+#         items = response_json.get("items", [])
         
-        # 提取搜索结果
-        results = []
-        for item in items:
-            title = item.get("title", "")
-            snippet = item.get("snippet", "")
-            results.append(f"{title}: {snippet}")
+#         # 提取搜索结果
+#         results = []
+#         for item in items:
+#             title = item.get("title", "")
+#             snippet = item.get("snippet", "")
+#             results.append(f"{title}: {snippet}")
         
-        # 将结果合并为单个字符串
-        result_text = " ".join(results)
-        return result_text, search_time
+#         # 将结果合并为单个字符串
+#         result_text = " ".join(results)
+#         return result_text, search_time
 
-    except requests.exceptions.RequestException as e:
-        print(f"Error during Google search: {e}")
-        return "", 0
+#     except requests.exceptions.RequestException as e:
+#         print(f"Error during Google search: {e}")
+#         return "", 0
 
 # 定义每个任务的system以及instruction prompt
-def get_recall_prompt(question: str) -> str:
+def get_rewrite_prompt(question: str) -> str:
     return f"""下面是一段关于家有儿女和刘星的问题，这段问题将“你”视为“刘星”。
-请为我将问题转化为适用于网络搜索的陈述，将所有代词替换为实体。
+请为我将问题转化为适用于RAG检索的陈述。
 严格遵循示例中的格式，不需要多余分析，避免诸如\"以下是答案：\"之类的陈述。\n
 
 示例输入：你喜欢你妈妈吗？
@@ -271,18 +272,22 @@ def get_cot_prompt(question: str, observation: str) -> str:
 {observation}
 """
 
-def get_style_prompt(role, question: str) -> str:
+def get_style_prompt_cot(role, question: str) -> str:
     return f"""你正在扮演 {role}，你需要将下面的句子转写成 {role} 的口吻
 {question}
 """
 
-# modified feice Apr 19, 2025 at 20:04
+# modified feice May 8, 2025 at 16:58
 def run_cot() -> None:
     if os.name != "nt":
         try:
             import readline  # noqa: F401
         except ImportError:
             print("Install `readline` for a better experience.")
+    # 参数
+    role = "刘星"
+    world = "家有儿女"
+    model_name = "cot_vanilla_刘星_glm4_cot_800_刘星_glm4_style"
 
     # 初始化三个模型
     print("正在加载模型...")
@@ -292,95 +297,102 @@ def run_cot() -> None:
     })
     cot_model = ChatModel({
         "model_name_or_path": "/data/hfc/checkpoints/GLM-4-9B-0414",
-        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_glm4_cot_800/glm4_8b_sft_lora/TorchTrainer_a7d31_00000_0_2025-04-25_10-54-50/checkpoint_000000/checkpoint",
+        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_glm4_cot_0508/glm4_8b_sft_lora/TorchTrainer_67654_00000_0_2025-05-08_16-57-00/checkpoint_000001/checkpoint",
         "template": "glm4"
     })
     style_model = ChatModel({
-        "model_name_or_path": "/data/hfc/checkpoints/GLM-4-9B-0414",
-        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_glm4_style/glm4_8b_sft_lora/TorchTrainer_436ee_00000_0_2025-04-29_10-32-58/checkpoint_000001/checkpoint",
-        "template": "glm4"
+        "model_name_or_path": "/data/hfc/checkpoints/Llama-3.1-8B-Instruct",
+        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_style/llama3_8b_sft_lora/TorchTrainer_9fdfa_00000_0_2025-04-16_18-36-15/checkpoint_000000/checkpoint",
+        "template": "llama3"
     })
-    print("模型加载完成！")
-
     # 初始化
     retriever = Retriever(config={
         "embedding_model": "/data/hfc/checkpoints/text2vec-large-chinese"
     })
 
-    role = "刘星"
-    world = "家有儿女"
+    print("模型加载完成！")
 
+    
+
+    # 1. 读取原始json
+    qa_path = "/data/hfc/RoleRAG/data0506/all/家有儿女_刘星_qa_135.json"
+    with open(qa_path, "r", encoding="utf-8") as f:
+        qa_data = json.load(f)
+
+    # 2. 检索相关文档
     file_paths = [
-        f"/data/hfc/RoleRAG/mydata/input/wiki/wiki_{role}.txt",
-        f"/data/hfc/RoleRAG/mydata/input/wiki/wiki_{world}.txt"
-        # "/data/hfc/datasets/RoleAgentBench/家有儿女 S1E1/profiles/刘星.jsonl"
+        f"/data/hfc/RoleRAG/data0506/input/wiki/wiki_{role}.txt",
+        f"/data/hfc/RoleRAG/data0506/input/wiki/wiki_{world}.txt",
+        f"/data/hfc/RoleRAG/data0506/process/summary/{world}_{role}_summary.json"
     ]
-
     docs = retriever.load_files(file_paths)
     retriever.create_vector_store(docs)
-
-    # 保存
     retriever.save_vector_store(f"/data/hfc/faiss_store/{world}_{role}")
 
-    # 定义问题列表
-    questions = [
-        "你如何看待人工智能？",
-        "你为什么喜欢捣蛋？",
-        "你喜欢玩原神吗？",
-        "你知道刘梅的生日吗？",
-        "你喜欢刘梅吗？",
-        "你喜欢刘星吗？",
-        "你还记得加利福尼亚的大蜘蛛吗？"
-    ]
+    # 3. 处理每个问题
+    for item in tqdm(qa_data, desc="CoT处理中"):
+        print("question: ", item.get("question", "").strip())
+        question = item.get("question", "").strip()
+        if not question:
+            continue
 
-    for question in questions:
-        print(f"\nUser: {question}")
+        rewrite_messages = [{"role": "user", "content": get_rewrite_prompt(question)}]
+        rewrite_response = ""
+        for new_text in rewrite_model.stream_chat(
+            rewrite_messages,
+            system="你是一个RAG模型的重写器，请将问题转化为适用于RAG检索的陈述"
+        ):
+            rewrite_response += new_text
+        print("rewrite_response: ", rewrite_response)
+        torch_gc()
 
-        # 阶段 1：Recall 模型
-        print("recall instruction: ", get_recall_prompt(question))
-        recall_messages = [{"role": "user", "content": get_recall_prompt(question)}]
-        print("Rewrite Assistant: ", end="", flush=True)
+
+
+        # 检索 observation
+        retrieved_docs = retriever.retrieve_top_k(rewrite_response, k=3, with_context=False)
         observation = ""
-        for new_text in rewrite_model.stream_chat(recall_messages, system="你是一个人工智能问题重写助手，按照规则重写问题"):
-            print(new_text, end="", flush=True)
-            observation += new_text
-        print("\n"+"="*20)
-        torch_gc()  # 清理显存
-        retrieved_docs = retriever.retrieve_top_k(question, k=2, with_context=False)
-
-        for i, doc in enumerate(retrieved_docs, 1):
-            print(f"=== 第 {i} 条检索结果 ===")
-            print(f"元数据: {doc.metadata}")
-            print()
-            # 合并检索到的文本
-            observation += "\n" + doc.page_content
+        for doc in retrieved_docs:
+            observation += doc.page_content + "\n"
+        print("observation: ", observation)
 
         # 阶段 2：CoT 模型
-        print("cot instruction: ", get_cot_prompt(question, observation))
         cot_messages = [{"role": "user", "content": get_cot_prompt(question, observation)}]
-        print("CoT Assistant: ", end="", flush=True)
         cot_response = ""
-        for new_text in cot_model.stream_chat(cot_messages, system="你是一个角色扮演专家，请以【问题重述】【实体确认】【逻辑推理】【分析回答】【最终回答】的顺序，以扮演角色的身份回答问题"):
-            print(new_text, end="", flush=True)
+        for new_text in cot_model.stream_chat(
+            cot_messages,
+            system="你是一个角色扮演专家，请以【问题重述】【实体确认】【逻辑推理】【分析回答】【最终回答】的顺序，以扮演角色的身份回答问题"
+        ):
             cot_response += new_text
-        print("\n"+"="*20)
-        torch_gc()  # 清理显存
+        print("cot_response: ", cot_response)
+        torch_gc()
 
         # 阶段 3：Style 模型
         cot_last_response = cot_response.split("\n")[-1].strip()
-        print("style instruction: ", get_style_prompt("刘星", cot_last_response))
-        style_messages = [{"role": "user", "content": get_style_prompt("刘星", cot_last_response)}]
-        # style_messages = [{"role": "user", "content": style_prefix + cot_response}]
-        print("Style Assistant: ", end="", flush=True)
+        print("get_style_prompt: ", get_style_prompt_cot(role, cot_last_response))
+        style_messages = [{"role": "user", "content": get_style_prompt_cot(role, cot_last_response)}]
         style_response = ""
-        for new_text in style_model.stream_chat(style_messages, system="你是一个语言改写助手，将这段语句转换为扮演人物的说话语气。"):
-            print(new_text, end="", flush=True)
+        for new_text in style_model.stream_chat(
+            style_messages,
+            system="你是一个语言改写助手，将这段语句转换为扮演人物的说话语气。"
+        ):
             style_response += new_text
-        print("\n"+"="*20)
-        torch_gc()  # 清理显存
+        print("style_response: ", style_response)
+        torch_gc()
 
-        print("Final Output: ", style_response)
-        print("History has been removed.\n")
+        # 合并结果到item
+        item["observation"] = observation
+        item["cot_response"] = cot_response
+        item["style_response"] = style_response
+
+    # 4. 保存结果
+    output_dir = "/data/hfc/RoleRAG/output"
+    os.makedirs(output_dir, exist_ok=True)
+
+    output_path = os.path.join(output_dir, f"{world}_{role}_{model_name}.json")
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(qa_data, f, ensure_ascii=False, indent=2)
+    print(f"已保存到 {output_path}")
+
 
 
 # 定义每个任务的system以及instruction prompt
@@ -403,7 +415,7 @@ def get_rag_prompt(role: str, profile: str, question: str, observation: str) -> 
 {profile}
 你需要回答的问题是：
 {question}
-可能的参考信息：
+已有的参考信息：
 {observation}
 """
 
@@ -416,7 +428,7 @@ def get_final_answer_prompt(role: str, profile: str, question: str, observation:
 {profile}
 你需要回答的问题是：
 {question}
-可能的参考信息：
+已有的参考信息：
 {observation}
 
 输出格式：
@@ -435,7 +447,7 @@ def get_style_prompt(role: str, sentence: str) -> str:
 [Style] <回答内容>
 """
     
-# modified feice Apr 24, 2025 at 21:24
+# modified feice May 8, 2025 at 17:08
 def run_rag() -> None:
     if os.name != "nt":
         try:
@@ -444,29 +456,35 @@ def run_rag() -> None:
             print("Install `readline` for a better experience.")
 
     # 设置角色与世界
+    # 1. 设置角色、世界、数据集路径、模型名、检索数据库路径
     role = "刘星"
     world = "家有儿女"
+    model_name = "rag"
+    qa_path = "/data/hfc/RoleRAG/data0506/all/家有儿女_刘星_qa_135.json"
+    faiss_store_path = f"/data/hfc/faiss_store/{world}_{role}_rag"
+    output_dir = "/data/hfc/RoleRAG/output"
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, f"{world}_{role}_{model_name}.json")
     profile = "刘星，刘梅之子。初中生（在第四部升上高中生），成绩（尤其化学）常令刘梅头痛。身材看似“瘦弱”，体育倒很不错。爱好广泛但大多都只折腾一时。一家的活宝，大多数麻烦的制造者。为人仗义，脑子里经常有些新奇的想法，里面有好主意也有馊主意。"
 
-    # 初始化模型
+
+    # 2. 初始化模型和检索器
     print("正在加载模型...")
     rag_model = ChatModel({
         "model_name_or_path": "/data/hfc/checkpoints/GLM-4-9B-0414",
         "template": "glm4"
     })
-    
     print("模型加载完成！")
+
 
     # 初始化检索器
     retriever = Retriever(config={
         "embedding_model": "/data/hfc/checkpoints/text2vec-large-chinese"
     })
-
-    # 加载文件路径
     file_paths = [
-        "/data/hfc/RoleRAG/mydata/input/wiki/wiki_刘星.txt",
-        "/data/hfc/RoleRAG/mydata/input/wiki/wiki_家有儿女.txt",
-        "/data/hfc/datasets/RoleAgentBench/家有儿女 S1E1/profiles/刘星.jsonl"
+        f"/data/hfc/RoleRAG/data0506/input/wiki/wiki_{role}.txt",
+        f"/data/hfc/RoleRAG/data0506/input/wiki/wiki_{world}.txt",
+        f"/data/hfc/RoleRAG/data0506/process/summary/{world}_{role}_summary.json"
     ]
 
     # 加载文件并创建向量数据库
@@ -474,87 +492,70 @@ def run_rag() -> None:
     retriever.create_vector_store(docs)
 
     # 保存向量数据库
-    retriever.save_vector_store(f"/data/hfc/faiss_store/{world}_{role}_rag")
+    retriever.save_vector_store(faiss_store_path)
 
-    # 定义问题列表
-    questions = [
-        "你如何看待人工智能？",
-        "你为什么喜欢捣蛋？",
-        "你喜欢玩原神吗？",
-        "你知道刘梅的生日吗？",
-        "你喜欢刘梅吗？",
-        "你喜欢刘星吗？",
-        "你还记得加利福尼亚的大蜘蛛吗？"
-    ]
+    # 3. 读取数据集
+    with open(qa_path, "r", encoding="utf-8") as f:
+        qa_data = json.load(f)
 
-    # 初始化观察状态为空
-    observation = ""
-
-    # 循环处理每个问题
-    for question in questions:
-        print(f"\n问题：{question}")
-        
-        # 生成 RAG 提示并传递给模型
-        messages = [{"role": "user", "content": get_rag_prompt(role, profile, question, observation)}]
-        model_response = ""
-        
-        max_attempts = 5  # 最大尝试次数
+    # 4. 遍历每个问题
+    for item in qa_data:
+        question = item.get("question", "").strip()
+        print("question: ", question)
+        if not question:
+            continue
+        observation = ""
+        max_attempts = 5
         attempts = 0
+        model_response = ""
         while attempts < max_attempts:
             attempts += 1
-            # 使用流式输出调用模型
-            for new_response in rag_model.stream_chat(messages):
-                print(new_response, end="", flush=True)
-                model_response += new_response
-            print("\n" + "*"*20)
-            print(model_response)
-            
-            # 去除开头的"\n"和" "
+            # 4.1 生成RAG prompt并调用模型
+            rag_prompt = get_rag_prompt(role, profile, question, observation)
+            messages = [{"role": "user", "content": rag_prompt}]
+            model_response = ""
+            for new_text in rag_model.stream_chat(messages):
+                model_response += new_text
             model_response = model_response.lstrip("\n").lstrip(" ")
-
+            print("model_response: ", model_response)
+            # 4.2 判断是否需要检索
             if model_response.startswith("[Retrieve]"):
-                # 调用检索器进行检索
-                print("开始检索...")
-                retrieved_docs = retriever.retrieve_top_k(question, k=3, with_context=False)
-                
-                # 将检索到的文档加入观察状态
+                # 检索并更新observation
+                retrieved_docs = retriever.retrieve_top_k(question, k=1, with_context=False)
                 retrieval_text = "\n".join([doc.page_content for doc in retrieved_docs])
-                observation += retrieval_text  # 更新观察状态
-                
-                print("检索结果已加入观察状态.")
-                print(f"检索结果：\n{retrieval_text}")
+                observation += model_response + ": " + retrieval_text
             elif model_response.startswith("[Answer]"):
-                # 如果模型返回了答案，跳出循环
-                print("模型返回答案，停止进一步请求。")
-                break  # 跳出循环
+                break
             else:
-                print("无效的模型响应，无法处理。")
-        
-        if model_response.startswith("[Answer]"):
-            # 解析模型的回答
-            answer = model_response[len("[Answer]"):].strip()
-            print(f"模型回答：{answer}")
+                # 无效响应，直接跳出
+                break
 
-            # 通过风格调整 prompt 进行风格化
-            style_prompt = get_style_prompt(role, answer)
-            style_response = ""
-            for new_response in rag_model.stream_chat({"role": "user", "content": style_prompt}):
-                print(new_response, end="", flush=True)
-                style_response += new_response
-            
-            style_answer = style_response[len("[Style]"):].strip()
-
-            print(f"风格化回答：{style_answer}")
-            observation = ""  # 清空观察状态
-            torch_gc()  # 清理显存
-        else:
-            # 如果达到最大尝试次数且没有返回有效答案，调用最终回答提示
-            print(f"模型未能生成有效的答案，调用最终回答生成。")
-            final_answer_prompt = get_final_answer_prompt(role, profile, question, observation)
+        # 5. 得到答案或最大次数后调用final_answer
+        if not model_response.startswith("[Answer]"):
+            print("observation: ", observation)
+            final_prompt = get_final_answer_prompt(role, profile, question, observation)
             final_answer = ""
-            for new_response in rag_model.stream_chat([{"role": "user", "content": final_answer_prompt}]):
-                print(new_response, end="", flush=True)
-                final_answer += new_response
-            print(f"\n最终回答：{final_answer}")
-            observation = ""  # 清空观察状态
-            torch_gc()  # 清理显存
+            for new_text in rag_model.stream_chat([{"role": "user", "content": final_prompt}]):
+                final_answer += new_text
+            model_response = final_answer.lstrip("\n").lstrip(" ")
+
+        # 6. 解析答案，进入风格化
+        answer = model_response[len("[Answer]"):].strip() if model_response.startswith("[Answer]") else model_response.strip()
+        style_prompt = get_style_prompt(role, answer)
+        style_response = ""
+        for new_text in rag_model.stream_chat([{"role": "user", "content": style_prompt}]):
+            style_response += new_text
+        style_answer = style_response[len("[Style]"):].strip() if style_response.startswith("[Style]") else style_response.strip()
+        print("style_answer: ", style_answer)
+
+        # 7. 保存到item
+        item["observation"] = observation
+        item["final_answer"] = answer
+        item["style_response"] = style_answer
+
+        torch_gc()
+
+    # 8. 保存结果
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(qa_data, f, ensure_ascii=False, indent=2)
+    print(f"已保存到 {output_path}")
