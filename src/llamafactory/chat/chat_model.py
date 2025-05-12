@@ -287,7 +287,7 @@ def run_cot() -> None:
     # 参数
     role = "刘星"
     world = "家有儿女"
-    model_name = "cot_vanilla_刘星_glm4_cot_800_刘星_glm4_style"
+    model_name = "cot_glm4_glm4_glm4"
 
     # 初始化三个模型
     print("正在加载模型...")
@@ -301,9 +301,9 @@ def run_cot() -> None:
         "template": "glm4"
     })
     style_model = ChatModel({
-        "model_name_or_path": "/data/hfc/checkpoints/Llama-3.1-8B-Instruct",
-        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_style/llama3_8b_sft_lora/TorchTrainer_9fdfa_00000_0_2025-04-16_18-36-15/checkpoint_000000/checkpoint",
-        "template": "llama3"
+        "model_name_or_path": "/data/hfc/checkpoints/GLM-4-9B-0414",
+        "adapter_name_or_path": "/data/hfc/RoleRAG/saves/刘星_glm4_style/glm4_8b_sft_lora/TorchTrainer_8bff6_00000_0_2025-05-08_20-32-46/checkpoint_000001/checkpoint/",
+        "template": "glm4"
     })
     # 初始化
     retriever = Retriever(config={

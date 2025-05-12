@@ -6,8 +6,6 @@ from glob import glob
 QA_DIR = "/data/hfc/RoleRAG/data0506/qa"
 OUTPUT_DIR = "/data/hfc/RoleRAG/data0506/all"
 
-
-
 def qa2all(world, role):
     """
     合并并打乱指定 world 和 role 的所有 JSON 文件。
@@ -21,21 +19,28 @@ def qa2all(world, role):
         :param source_type: 数据来源类型
         :return: 提取后的数据列表
         """
+        hallucination_mapping = {
+            "能力越界幻觉": "overreach",
+            "能力不足幻觉": "underreach",
+            "诱导性幻觉": "induction"
+        }
+
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            # 只保留 "question", "answer", "retrieve" 字段，并加上 source_type
+            # 只保留 "question", "answer", "retrieve" 字段，并根据条件调整 source_type
             return [
                 {
                     "question": item.get("question"),
                     "answer": item.get("answer"),
                     "retrieve": item.get("retrieve", ""),
-                    "source_type": source_type
+                    "source_type": f"qa_anti_{hallucination_mapping.get(item.get('hallucination', '无'), 'unknown')}" 
+                                   if source_type == "qa_anti" else source_type
                 }
                 for item in data
             ]
     
     # 定义需要遍历的子文件夹
-    subfolders = ["qa_anti", "qa_chat", "qa_statement", "qa_summary"]
+    subfolders = ["qa_conv", "qa_anti", "qa_chat", "qa_statement", "qa_summary"]
     merged_data = []
 
     # 遍历子文件夹

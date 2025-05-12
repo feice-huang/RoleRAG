@@ -114,7 +114,7 @@ def anti2qa(world, role, api_key, model_engine="gpt-4o"):
                     query = qa.get("query")
                     answer = qa.get("answer")
                     if query and answer:
-                        results.append({"question": query, "answer": answer, "retrieve": ""})
+                        results.append({"question": query, "answer": answer, "retrieve": "", "hallucination": question_type})
             except json.JSONDecodeError as e:
                 print(f"解析生成内容时出错: {e}")
                 print("生成的内容:", generated_content)

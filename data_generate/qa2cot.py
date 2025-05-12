@@ -222,7 +222,8 @@ def generate_cot(world, role, apikey, model_engine):
             "instruction": "",
             "input": get_cot_prompt(item["question"], item.get("retrieve", "")),
             "output": item["answer"],
-            "cot": generated_cot
+            "cot": generated_cot,
+            "hallucination": "无"
         })
 
     # 保存生成的 CoT 数据为 JSON 文件

@@ -221,7 +221,8 @@ def generate_cot(world, role, apikey, model_engine):
             "instruction": "",
             "input": get_cot_prompt(item["question"], item.get("retrieve", "")),
             "output": item["answer"],
-            "cot": generated_cot
+            "cot": generated_cot,
+            "hallucination": item["hallucination"]
         })
 
     # 保存生成的 CoT 数据为 JSON 文件
@@ -264,8 +265,8 @@ def qa2anticot(world, role, apikey, model_engine="gpt-4o"):
 
     # 保存合并后的数据到 JSON 文件
     temp_qa_path = f"{COT_DIR}/{role}_temp_combined_qa.json"
-    os.makedirs(os.path.dirname(temp_dpo_path), exist_ok=True)
-    with open(temp_dpo_path, "w", encoding="utf-8") as f:
+    os.makedirs(os.path.dirname(temp_qa_path), exist_ok=True)
+    with open(temp_qa_path, "w", encoding="utf-8") as f:
         json.dump(combined_data, f, ensure_ascii=False, indent=4)
 
     # 调用 generate_cot 生成 CoT
